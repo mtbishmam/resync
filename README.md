@@ -2,6 +2,18 @@
 
 A fast, intentional video and reading library.
 
+## Deployment identity
+
+The public identity is a hard requirement: `ReSync` must deploy to
+`resync.mtbishmam.chatgpt.site`. A generated, abbreviated, or legacy hostname
+must never be accepted as a replacement. Before any future migration or new
+deployment, run `npm run verify:site -- resync.mtbishmam.chatgpt.site`; it
+refuses to pass without the explicit target or if the target differs.
+
+The existing legacy Sites project is preserved until a replacement with this
+exact hostname is live and verified. Do not delete the legacy project during
+that transition.
+
 RePlay is the curated video feed and ReRead is the matching blog/article feed.
 Both use Inbox, a 5-minute testing cooldown, Queue, and Finished. The final
 release will use a 24-hour cooldown. Pasted links enter Inbox directly.

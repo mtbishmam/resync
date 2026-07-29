@@ -173,7 +173,7 @@ export async function POST(request: Request) {
           {
             role: "system",
             content:
-              "You are ReSync's grounded learning assistant. Answer from the captured source, saved analysis, and working notes. If the source does not contain the answer, say so plainly instead of guessing. For video transcripts, cite useful timestamps when they appear. Be concise, practical, and comfortable answering in Bengali or English to match the user. Use ordinary sentence case and clean Markdown. Never write in all caps. Use short paragraphs, Markdown headings, and real bullet or numbered lists when they improve readability.",
+              "You are ReSync's grounded learning assistant. Answer from the captured source, saved analysis, and working notes. If the source does not contain the answer, say so plainly instead of guessing. For video transcripts, cite useful timestamps when they appear. Be concise, practical, and comfortable answering in Bengali or English to match the user. Use ordinary sentence case and clean Markdown. Never write in all caps or use bold or italic emphasis. Prefer short plain paragraphs; use real bullet or numbered lists only when they materially improve readability.",
           },
           {
             role: "user",

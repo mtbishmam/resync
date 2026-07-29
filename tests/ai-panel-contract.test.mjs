@@ -57,3 +57,23 @@ test("mixed Markdown renders as headings and real lists in AI responses", async 
   assert.match(chatRoute, /Use ordinary sentence case and clean Markdown/);
   assert.match(chatRoute, /Never write in all caps/);
 });
+
+test("assistant text is normalized to the same regular style as the AI summary", async () => {
+  const page = await source("app/page.tsx");
+  const styles = await source("app/globals.css");
+  const chatRoute = await source("app/api/chat/route.ts");
+
+  assert.match(page, /function normalizeAssistantMarkdown/);
+  assert.match(page, /\.replace\(\/\\\*\\\*\(\[\^\*\\n\]\+\)\\\*\\\*\/g, "\$1"\)/);
+  assert.match(page, /uppercaseLetters \/ letters\.length >= 0\.55/);
+  assert.match(
+    page,
+    /message\.role === "assistant"[\s\S]*?normalizeAssistantMarkdown\(message\.content\)/,
+  );
+  assert.match(
+    styles,
+    /\.chat-message\.assistant \.markdown \*[\s\S]*?font-weight:\s*400 !important/,
+  );
+  assert.match(styles, /\.chat-message\.assistant > span[\s\S]*?text-transform:\s*none/);
+  assert.match(chatRoute, /Never write in all caps or use bold or italic emphasis/);
+});

@@ -2823,14 +2823,24 @@ body {
   line-height: 1.65;
 }
 
-.chat-message.assistant .markdown strong {
+.chat-message.assistant > span {
   font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.chat-message.assistant .markdown *,
+.chat-message.assistant .markdown strong,
+.chat-message.assistant .markdown em {
+  font-weight: 400 !important;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .chat-message.assistant .markdown h4 {
   margin: 0 0 0.55em;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.65;
 }
 

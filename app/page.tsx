@@ -334,6 +334,51 @@ function renderInlineMarkdown(value: string): ReactNode[] {
   });
 }
 
+function normalizeAssistantMarkdown(content: string) {
+  const withoutEmphasis = content
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "$1");
+
+  return withoutEmphasis
+    .split(/\r?\n/)
+    .map((line) => {
+      const match = line.match(
+        /^(\s*(?:#{1,4}\s+|[-*]\s+|\d+\.\s+)?)(.*)$/,
+      );
+      if (!match?.[2]) return line;
+      const [, prefix, rawText] = match;
+      const letters = rawText.match(/[A-Za-z]/g) ?? [];
+      const uppercaseLetters = letters.filter(
+        (letter) => letter === letter.toUpperCase(),
+      ).length;
+      let text =
+        letters.length >= 4 && uppercaseLetters / letters.length >= 0.55
+          ? rawText.toLowerCase()
+          : rawText;
+
+      text = text
+        .replace(/(^|[.!?]\s+)([a-z])/g, (_, boundary, letter: string) =>
+          `${boundary}${letter.toUpperCase()}`,
+        )
+        .replace(/\bi\b/g, "I")
+        .replace(/\bai\b/gi, "AI")
+        .replace(/\bapi\b/gi, "API")
+        .replace(/\bd1\b/gi, "D1")
+        .replace(/\br2\b/gi, "R2")
+        .replace(/\bgpt\b/gi, "GPT")
+        .replace(/\burl\b/gi, "URL")
+        .replace(/\bamex\b/gi, "Amex")
+        .replace(/\bvisa\b/gi, "Visa")
+        .replace(/\bmastercard\b/gi, "Mastercard")
+        .replace(/\byoutube\b/gi, "YouTube")
+        .replace(/\bopenai\b/gi, "OpenAI")
+        .replace(/\bworld war i\b/gi, "World War I");
+
+      return `${prefix}${text}`;
+    })
+    .join("\n");
+}
+
 function MarkdownText({
   content,
   className,
@@ -2902,7 +2947,13 @@ export default function Home() {
                           <span>
                             {message.role === "user" ? "You" : "ReSync AI"}
                           </span>
-                          <MarkdownText content={message.content} />
+                          <MarkdownText
+                            content={
+                              message.role === "assistant"
+                                ? normalizeAssistantMarkdown(message.content)
+                                : message.content
+                            }
+                          />
                         </div>
                       ))}
                       {chatBusy ? (

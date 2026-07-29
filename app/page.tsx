@@ -1529,7 +1529,7 @@ export default function Home() {
       setChatMessages((current) =>
         current.filter((entry) => entry.id !== optimisticId),
       );
-      setChatInput(message);
+      setChatInput((current) => (current.trim() ? current : message));
       setNotice(
         error instanceof Error
           ? error.message
@@ -2627,6 +2627,108 @@ export default function Home() {
             </div>
 
             <aside className="ai-column">
+              <section className="notes-panel">
+                <div className="section-title">
+                  <h3>Working notes</h3>
+                  <span>{cloudStatus === "synced" ? "cloud synced" : "saved locally"}</span>
+                </div>
+                <textarea
+                  value={notes[selectedVideo.id] ?? ""}
+                  onChange={(event) => {
+                    const changedAt = Date.now();
+                    setNotes((current) => ({
+                      ...current,
+                      [selectedVideo.id]: event.target.value,
+                    }));
+                    setNoteUpdatedAt((current) => ({
+                      ...current,
+                      [selectedVideo.id]: changedAt,
+                    }));
+                  }}
+                  placeholder="Key ideas, timestamps, decisions, next actions…"
+                />
+                <div className="knowledge-save-state">
+                  <span aria-hidden="true">✦</span>
+                  {knowledgeBusyIds.has(selectedVideo.id)
+                    ? "Updating your AI learning summary…"
+                    : knowledgeSummaries[selectedVideo.id]
+                      ? "AI learning summary is active in future novelty scores."
+                      : "Write a meaningful note and ReSync will build your learning memory."}
+                </div>
+              </section>
+
+              <section className="ask-panel">
+                <div className="ask-preview">
+                  <span>✦</span>
+                  <p>
+                    Ask for the highest-value ideas, challenge a claim, or turn your
+                    notes into actions.
+                  </p>
+                </div>
+                <div className="chat-space" ref={chatMessagesRef}>
+                  {chatLoading ? (
+                    <p>Loading conversation…</p>
+                  ) : chatMessages.length || chatBusy ? (
+                    <div className="chat-messages">
+                      {chatMessages.map((message) => (
+                        <div
+                          className={`chat-message ${message.role}`}
+                          key={message.id}
+                        >
+                          <span>
+                            {message.role === "user" ? "You" : "ReSync AI"}
+                          </span>
+                          <MarkdownText content={message.content} />
+                        </div>
+                      ))}
+                      {chatBusy ? (
+                        <div className="chat-message assistant pending">
+                          <span>ReSync AI</span>
+                          <p>Thinking…</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p>
+                      Ask about this{" "}
+                      {selectedVideo.type === "Watch" ? "video" : "article"}.
+                      ReSync uses the captured source and your notes when
+                      available.
+                    </p>
+                  )}
+                </div>
+                <form
+                  className="ask-input"
+                  onSubmit={(event) => void sendChat(event, selectedVideo.id)}
+                >
+                  <input
+                    aria-label="Ask ReSync AI"
+                    placeholder={
+                      chatBusy
+                        ? "Type your next question while ReSync AI thinks…"
+                        : `Ask about this ${
+                            selectedVideo.type === "Watch" ? "video" : "article"
+                          }…`
+                    }
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                  />
+                  <button
+                    aria-label={
+                      chatBusy
+                        ? "Wait for the current answer before sending"
+                        : "Send message"
+                    }
+                    disabled={chatBusy || !chatInput.trim()}
+                  >
+                    ↑
+                  </button>
+                </form>
+                <p>
+                  Conversations are saved in D1 separately from working notes.
+                </p>
+              </section>
+
               <section className="score-panel">
                 <div className="score-heading">
                   <div>
@@ -2798,100 +2900,6 @@ export default function Home() {
                 </p>
               </section>
 
-              <section className="notes-panel">
-                <div className="section-title">
-                  <h3>Working notes</h3>
-                  <span>{cloudStatus === "synced" ? "cloud synced" : "saved locally"}</span>
-                </div>
-                <textarea
-                  value={notes[selectedVideo.id] ?? ""}
-                  onChange={(event) => {
-                    const changedAt = Date.now();
-                    setNotes((current) => ({
-                      ...current,
-                      [selectedVideo.id]: event.target.value,
-                    }));
-                    setNoteUpdatedAt((current) => ({
-                      ...current,
-                      [selectedVideo.id]: changedAt,
-                    }));
-                  }}
-                  placeholder="Key ideas, timestamps, decisions, next actions…"
-                />
-                <div className="knowledge-save-state">
-                  <span aria-hidden="true">✦</span>
-                  {knowledgeBusyIds.has(selectedVideo.id)
-                    ? "Updating your AI learning summary…"
-                    : knowledgeSummaries[selectedVideo.id]
-                      ? "AI learning summary is active in future novelty scores."
-                      : "Write a meaningful note and ReSync will build your learning memory."}
-                </div>
-              </section>
-
-              <section className="ask-panel">
-                <div className="ask-preview">
-                  <span>✦</span>
-                  <p>
-                    Ask for the highest-value ideas, challenge a claim, or turn your
-                    notes into actions.
-                  </p>
-                </div>
-                <div className="chat-space" ref={chatMessagesRef}>
-                  {chatLoading ? (
-                    <p>Loading conversation…</p>
-                  ) : chatMessages.length || chatBusy ? (
-                    <div className="chat-messages">
-                      {chatMessages.map((message) => (
-                        <div
-                          className={`chat-message ${message.role}`}
-                          key={message.id}
-                        >
-                          <span>
-                            {message.role === "user" ? "You" : "ReSync AI"}
-                          </span>
-                          <MarkdownText content={message.content} />
-                        </div>
-                      ))}
-                      {chatBusy ? (
-                        <div className="chat-message assistant pending">
-                          <span>ReSync AI</span>
-                          <p>Thinking…</p>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p>
-                      Ask about this{" "}
-                      {selectedVideo.type === "Watch" ? "video" : "article"}.
-                      ReSync uses the captured source and your notes when
-                      available.
-                    </p>
-                  )}
-                </div>
-                <form
-                  className="ask-input"
-                  onSubmit={(event) => void sendChat(event, selectedVideo.id)}
-                >
-                  <input
-                    aria-label="Ask ReSync AI"
-                    placeholder={`Ask about this ${
-                      selectedVideo.type === "Watch" ? "video" : "article"
-                    }…`}
-                    value={chatInput}
-                    onChange={(event) => setChatInput(event.target.value)}
-                    disabled={chatBusy}
-                  />
-                  <button
-                    aria-label="Send message"
-                    disabled={chatBusy || !chatInput.trim()}
-                  >
-                    ↑
-                  </button>
-                </form>
-                <p>
-                  Conversations are saved in D1 separately from working notes.
-                </p>
-              </section>
             </aside>
           </section>
         </div>

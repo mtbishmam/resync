@@ -134,6 +134,10 @@ Initial content categories include:
 
 - RePlay is the curated feed of content discovered from followed mentors,
   channels, and sites.
+- ReRead is the equivalent curated feed for blogs and articles. RePlay items
+  have Type `Watch`; ReRead items have Type `Read`.
+- Both feeds use the same protocol: curated feed -> Inbox -> cooldown -> Queue
+  -> Finished.
 - A curated item cannot be watched directly from the feed. I can add it to
   Inbox, which starts a cooldown.
 - When the cooldown ends, I can deliberately move the item from Inbox to Queue.
@@ -141,9 +145,11 @@ Initial content categories include:
   cooldown.
 - The cooldown is 5 minutes during MVP testing and 24 hours in the final
   version.
-- Queue contains only videos I explicitly intend to watch.
-- Videos and notes sync through D1 so the same library is available on desktop
-  and mobile. Browser storage remains a fast local cache.
+- Queue contains only items I explicitly intend to consume.
+- Every item has an editable single-select Type (`Watch` or `Read`) and
+  multi-select Topics (`AI`, `CP`, `Tech`, and `Business`). Property edits,
+  notes, and library state sync directly through D1 so the same library is
+  available on desktop and mobile. Browser storage remains a fast local cache.
 - Recommendations should be ranked by expected value to me, not simply
   popularity or recency.
 - The library should show why each video was selected.
@@ -176,6 +182,13 @@ If the app determines that a video is low-value, it should offer to:
 - The value judgment should be personalized rather than universally applied.
 - The app should consider legitimate rest and entertainment goals.
 - It should use the transcript and available metadata when evaluating a video.
+- Transcript analysis should estimate novelty against my goals, notes,
+  completed content, and explicitly recorded knowledge.
+- The analysis should return one of three recommendations: `watch`, `skim`, or
+  `summary_only`, with the learnable ideas and timestamps that justify it.
+- If the transcript contains no meaningful new material for me, the default
+  recommendation should be not to watch. ReSync should present a short summary
+  instead while preserving an explicit watch-anyway override.
 - It should show a confidence level or concise rationale for its judgment.
 - I can continue the current video, request only the summary, switch videos, or
   disable the intervention.

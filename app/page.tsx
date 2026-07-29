@@ -10,7 +10,8 @@ import {
 } from "react";
 
 type Status = "feed" | "inbox" | "queued" | "watched";
-type Topic = "Unsorted" | "AI" | "Development" | "Business" | "CP";
+type ContentType = "Watch" | "Read";
+type Topic = "AI" | "CP" | "Tech" | "Business";
 type CloudStatus = "connecting" | "syncing" | "synced" | "offline";
 type ValueFactor = {
   label: string;
@@ -32,7 +33,8 @@ type Video = {
   channel: string;
   durationMinutes: number;
   durationSeconds?: number;
-  topic: Topic;
+  type: ContentType;
+  topics: Topic[];
   status: Status;
   valueScore: number;
   valueReason: string;
@@ -51,6 +53,8 @@ const CLOUD_SYNCED_KEY = "resync-cloud-synced";
 const CLOUD_DIRTY_KEY = "resync-cloud-dirty";
 // Five minutes keeps the cooldown easy to test. The final ReSync release uses 24 hours.
 const COOLDOWN_MINUTES = 5;
+const topicOptions: Topic[] = ["AI", "CP", "Tech", "Business"];
+const topics: Array<"All" | Topic> = ["All", ...topicOptions];
 
 const starterVideos: Video[] = [
   {
@@ -59,7 +63,8 @@ const starterVideos: Video[] = [
     title: "Building AI agents that actually finish the job",
     channel: "Matthew Berman",
     durationMinutes: 18,
-    topic: "AI",
+    type: "Watch",
+    topics: ["AI"],
     status: "feed",
     valueScore: 94,
     valueReason: "Directly useful for your AI app",
@@ -83,7 +88,8 @@ const starterVideos: Video[] = [
     title: "Why your web app feels slow",
     channel: "Theo",
     durationMinutes: 24,
-    topic: "Development",
+    type: "Watch",
+    topics: ["Tech"],
     status: "feed",
     valueScore: 89,
     valueReason: "High relevance to perceived speed",
@@ -107,7 +113,8 @@ const starterVideos: Video[] = [
     title: "The fastest way to make an offer better",
     channel: "Alex Hormozi",
     durationMinutes: 12,
-    topic: "Business",
+    type: "Watch",
+    topics: ["Business"],
     status: "feed",
     valueScore: 83,
     valueReason: "Short, practical, immediately actionable",
@@ -131,7 +138,8 @@ const starterVideos: Video[] = [
     title: "How strong programmers think through hard problems",
     channel: "Competitive Programming",
     durationMinutes: 31,
-    topic: "CP",
+    type: "Watch",
+    topics: ["CP"],
     status: "feed",
     valueScore: 78,
     valueReason: "Supports deliberate problem-solving practice",
@@ -149,15 +157,6 @@ const starterVideos: Video[] = [
     progress: 100,
     accent: "green",
   },
-];
-
-const topics: Array<"All" | Topic> = [
-  "All",
-  "Unsorted",
-  "AI",
-  "Development",
-  "Business",
-  "CP",
 ];
 
 function getYouTubeId(value: string) {
@@ -186,6 +185,29 @@ function getYouTubeId(value: string) {
   }
 }
 
+function getWebUrl(value: string) {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:" ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function articleDetails(url: URL) {
+  const hostname = url.hostname.replace(/^www\./, "");
+  const slug = url.pathname
+    .split("/")
+    .filter(Boolean)
+    .at(-1)
+    ?.replace(/[-_]+/g, " ")
+    .replace(/\.[a-z0-9]+$/i, "");
+  const title = slug
+    ? slug.replace(/\b\w/g, (letter) => letter.toUpperCase())
+    : `Article from ${hostname}`;
+  return { title, channel: hostname };
+}
+
 function relativeTime(timestamp: number, now: number) {
   const minutes = Math.max(1, Math.round((now - timestamp) / 60000));
   if (minutes < 60) return `${minutes}m ago`;
@@ -211,8 +233,7 @@ function formatDuration(seconds?: number, minutes?: number) {
     : `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
-function normalizeVideo(video: Partial<Video>): Video {
-  const validTopics: Topic[] = ["Unsorted", "AI", "Development", "Business", "CP"];
+function normalizeVideo(video: Partial<Video> & { topic?: string }): Video {
   const starterMatch = starterVideos.find((item) => item.id === video.id);
   const addedAt = video.addedAt ?? Date.now();
   const status =
@@ -221,6 +242,10 @@ function normalizeVideo(video: Partial<Video>): Video {
       ? (video.status as Status)
       : "feed");
   const configuredCooldownUntil = addedAt + COOLDOWN_MINUTES * 60 * 1000;
+  const legacyTopic = video.topic === "Development" ? "Tech" : video.topic;
+  const normalizedTopics = (
+    Array.isArray(video.topics) ? video.topics : legacyTopic ? [legacyTopic] : []
+  ).filter((topic): topic is Topic => topicOptions.includes(topic as Topic));
   return {
     id: video.id ?? crypto.randomUUID(),
     youtubeId: video.youtubeId ?? getYouTubeId(video.url ?? ""),
@@ -237,9 +262,8 @@ function normalizeVideo(video: Partial<Video>): Video {
     durationSeconds:
       video.durationSeconds ??
       (video.durationMinutes ? video.durationMinutes * 60 : 0),
-    topic: validTopics.includes(video.topic as Topic)
-      ? (video.topic as Topic)
-      : "Unsorted",
+    type: video.type === "Read" ? "Read" : "Watch",
+    topics: Array.from(new Set(normalizedTopics)),
     status,
     valueScore: video.valueScore ?? 0,
     valueReason: video.valueReason ?? "AI analysis pending",
@@ -310,6 +334,7 @@ export default function Home() {
   const [noticeTone, setNoticeTone] = useState<"info" | "success" | "error">(
     "info",
   );
+  const [activeType, setActiveType] = useState<ContentType>("Watch");
   const [activeStatus, setActiveStatus] = useState<Status>("feed");
   const [activeTopic, setActiveTopic] = useState<"All" | Topic>("All");
   const [search, setSearch] = useState("");
@@ -464,24 +489,45 @@ export default function Home() {
 
   const counts = useMemo(
     () => ({
-      feed: videos.filter((video) => video.status === "feed").length,
-      inbox: videos.filter((video) => video.status === "inbox").length,
-      queued: videos.filter((video) => video.status === "queued").length,
-      watched: videos.filter((video) => video.status === "watched").length,
+      feed: videos.filter(
+        (video) => video.type === activeType && video.status === "feed",
+      ).length,
+      inbox: videos.filter(
+        (video) => video.type === activeType && video.status === "inbox",
+      ).length,
+      queued: videos.filter(
+        (video) => video.type === activeType && video.status === "queued",
+      ).length,
+      watched: videos.filter(
+        (video) => video.type === activeType && video.status === "watched",
+      ).length,
+    }),
+    [activeType, videos],
+  );
+  const feedCounts = useMemo(
+    () => ({
+      Watch: videos.filter(
+        (video) => video.type === "Watch" && video.status === "feed",
+      ).length,
+      Read: videos.filter(
+        (video) => video.type === "Read" && video.status === "feed",
+      ).length,
     }),
     [videos],
   );
 
   const visibleVideos = useMemo(() => {
     const result = videos.filter((video) => {
+      const matchesType = video.type === activeType;
       const matchesStatus = video.status === activeStatus;
-      const matchesTopic = activeTopic === "All" || video.topic === activeTopic;
+      const matchesTopic =
+        activeTopic === "All" || video.topics.includes(activeTopic);
       const query = search.trim().toLowerCase();
       const matchesSearch =
         !query ||
         video.title.toLowerCase().includes(query) ||
         video.channel.toLowerCase().includes(query);
-      return matchesStatus && matchesTopic && matchesSearch;
+      return matchesType && matchesStatus && matchesTopic && matchesSearch;
     });
 
     return result.sort((a, b) => {
@@ -496,7 +542,7 @@ export default function Home() {
       }
       return b.valueScore - a.valueScore;
     });
-  }, [activeStatus, activeTopic, search, sort, videos]);
+  }, [activeStatus, activeTopic, activeType, search, sort, videos]);
 
   const totalMinutes = visibleVideos.reduce(
     (sum, video) => sum + video.durationMinutes,
@@ -575,32 +621,47 @@ export default function Home() {
     }
   }
 
-  function addVideo(event: FormEvent) {
+  function addContent(event: FormEvent) {
     event.preventDefault();
     const value = url.trim();
-    const youtubeId = getYouTubeId(value);
+    const youtubeId = activeType === "Watch" ? getYouTubeId(value) : undefined;
+    const webUrl = getWebUrl(value);
 
-    if (!youtubeId) {
+    if (activeType === "Watch" && !youtubeId) {
       setNotice("Paste a valid YouTube video link.");
       setNoticeTone("error");
       return;
     }
+    if (activeType === "Read" && !webUrl) {
+      setNotice("Paste a valid article link beginning with http:// or https://.");
+      setNoticeTone("error");
+      return;
+    }
 
-    if (videos.some((video) => video.youtubeId === youtubeId || video.url === value)) {
-      setNotice("Already in RePlay — no duplicate added.");
+    if (
+      videos.some(
+        (video) =>
+          (youtubeId && video.youtubeId === youtubeId) ||
+          video.url.replace(/\/$/, "") === value.replace(/\/$/, ""),
+      )
+    ) {
+      setNotice(`Already in ${activeType === "Watch" ? "RePlay" : "ReRead"} — no duplicate added.`);
       setNoticeTone("error");
       return;
     }
 
     const addedAt = Date.now();
+    const readDetails =
+      activeType === "Read" && webUrl ? articleDetails(webUrl) : undefined;
     const newVideo: Video = {
       id: crypto.randomUUID(),
       youtubeId,
       url: value,
-      title: "Fetching video details…",
-      channel: "YouTube",
+      title: readDetails?.title ?? "Fetching video details…",
+      channel: readDetails?.channel ?? "YouTube",
       durationMinutes: 0,
-      topic: "Unsorted",
+      type: activeType,
+      topics: [],
       status: "inbox",
       valueScore: 0,
       valueReason: "AI analysis pending",
@@ -613,9 +674,16 @@ export default function Home() {
     setVideos((current) => [newVideo, ...current]);
     setActiveStatus("inbox");
     setUrl("");
-    setNotice("Saved instantly. Fetching title and channel…");
-    setNoticeTone("info");
-    void enrichMetadata(newVideo.id, value);
+    if (activeType === "Watch") {
+      setNotice("Saved instantly. Fetching title, duration, and channel…");
+      setNoticeTone("info");
+      void enrichMetadata(newVideo.id, value);
+    } else {
+      setNotice(
+        `Article saved to Inbox. ${COOLDOWN_MINUTES}-minute cooldown started.`,
+      );
+      setNoticeTone("success");
+    }
   }
 
   function changeStatus(id: string, status: Status) {
@@ -656,8 +724,29 @@ export default function Home() {
       ),
     );
     setActiveStatus("queued");
-    setNotice("Cooldown complete. Video moved to Queue.");
+    setNotice("Cooldown complete. Item moved to Queue.");
     setNoticeTone("success");
+  }
+
+  function updateVideo(id: string, changes: Partial<Video>) {
+    setVideos((current) =>
+      current.map((video) => (video.id === id ? { ...video, ...changes } : video)),
+    );
+  }
+
+  function toggleTopic(id: string, topic: Topic) {
+    setVideos((current) =>
+      current.map((video) =>
+        video.id === id
+          ? {
+              ...video,
+              topics: video.topics.includes(topic)
+                ? video.topics.filter((item) => item !== topic)
+                : [...video.topics, topic],
+            }
+          : video,
+      ),
+    );
   }
 
   function startSidebarResize(startX: number) {
@@ -681,7 +770,7 @@ export default function Home() {
     setVideos((current) => current.filter((item) => item.id !== video.id));
     setLastRemoved(video);
     if (selectedId === video.id) setSelectedId(null);
-    setNotice("Video removed from RePlay.");
+    setNotice(`${video.type === "Watch" ? "Video" : "Article"} removed.`);
     setNoticeTone("success");
   }
 
@@ -689,7 +778,7 @@ export default function Home() {
     if (!lastRemoved) return;
     setVideos((current) => [lastRemoved, ...current]);
     setLastRemoved(null);
-    setNotice("Video restored.");
+    setNotice("Item restored.");
     setNoticeTone("success");
   }
 
@@ -705,22 +794,47 @@ export default function Home() {
         </a>
 
         <p className="sidebar-label page-label">Library</p>
-        <nav className="primary-nav" aria-label="RePlay sections">
+        <nav className="primary-nav" aria-label="ReSync library sections">
           {[
-            ["feed", "RePlay"],
-            ["inbox", "Inbox"],
-            ["queued", "Queue"],
-            ["watched", "Watched"],
-          ].map(([key, label]) => (
+            ["Watch", "RePlay"],
+            ["Read", "ReRead"],
+          ].map(([type, label]) => (
             <button
-              className={activeStatus === key ? "nav-item active" : "nav-item"}
-              key={key}
-              onClick={() => setActiveStatus(key as Status)}
+              className={
+                activeType === type && activeStatus === "feed"
+                  ? `nav-item content-tab ${type === "Read" ? "nested" : ""} active`
+                  : `nav-item content-tab ${type === "Read" ? "nested" : ""}`
+              }
+              key={type}
+              onClick={() => {
+                setActiveType(type as ContentType);
+                setActiveStatus("feed");
+              }}
             >
               <span>{label}</span>
-              <span className="nav-count">{counts[key as keyof typeof counts]}</span>
+              <span className="nav-count">
+                {feedCounts[type as ContentType]}
+              </span>
             </button>
           ))}
+          <div className="nav-protocol">
+            {[
+              ["inbox", "Inbox"],
+              ["queued", "Queue"],
+              ["watched", "Finished"],
+            ].map(([key, label]) => (
+              <button
+                className={activeStatus === key ? "nav-item active" : "nav-item"}
+                key={key}
+                onClick={() => setActiveStatus(key as Status)}
+              >
+                <span>{label}</span>
+                <span className="nav-count">
+                  {counts[key as keyof typeof counts]}
+                </span>
+              </button>
+            ))}
+          </div>
         </nav>
 
         <div className="sidebar-divider" />
@@ -754,7 +868,7 @@ export default function Home() {
           <div className="storage-track">
             <span style={{ width: `${Math.min(100, videos.length * 7)}%` }} />
           </div>
-          <p>{videos.length} videos · available across your devices.</p>
+          <p>{videos.length} items · available across your devices.</p>
         </div>
         <div
           className="sidebar-resizer"
@@ -780,8 +894,13 @@ export default function Home() {
       <section className="main-panel">
         <header className="topbar">
           <div>
-            <p className="eyebrow">ReSync / RePlay</p>
-            <h1>Save the urge. Watch with intention.</h1>
+            <p className="eyebrow">
+              ReSync / {activeType === "Watch" ? "RePlay" : "ReRead"}
+            </p>
+            <h1>
+              Save the urge. {activeType === "Watch" ? "Watch" : "Read"} with
+              intention.
+            </h1>
             <p className="intro-copy">
               Curated discoveries become intentional choices: Inbox, cooldown, then Queue.
             </p>
@@ -789,21 +908,28 @@ export default function Home() {
           <div className="profile">MT</div>
         </header>
 
-        <section className="capture-panel" aria-label="Add a video">
-          <form onSubmit={addVideo}>
+        <section
+          className="capture-panel"
+          aria-label={`Add ${activeType === "Watch" ? "a video" : "an article"}`}
+        >
+          <form onSubmit={addContent}>
             <div className="capture-icon">↗</div>
-            <label className="sr-only" htmlFor="video-url">
-              YouTube video URL
+            <label className="sr-only" htmlFor="content-url">
+              {activeType === "Watch" ? "YouTube video URL" : "Article URL"}
             </label>
             <input
-              id="video-url"
+              id="content-url"
               value={url}
               onChange={(event) => {
                 setUrl(event.target.value);
                 setNotice("");
                 setNoticeTone("info");
               }}
-              placeholder="Paste a YouTube link…"
+              placeholder={
+                activeType === "Watch"
+                  ? "Paste a YouTube link…"
+                  : "Paste a blog or article link…"
+              }
               inputMode="url"
               autoComplete="off"
             />
@@ -814,7 +940,7 @@ export default function Home() {
             <span className="status-light" />
             <span>
               {notice ||
-                `Pasted links go to Inbox · ${COOLDOWN_MINUTES}-minute cooldown`}
+                `Pasted ${activeType === "Watch" ? "videos" : "articles"} go to Inbox · ${COOLDOWN_MINUTES}-minute cooldown`}
             </span>
           </div>
         </section>
@@ -835,7 +961,7 @@ export default function Home() {
           <div className="toolbar-actions">
             <label className="search-field">
               <span>⌕</span>
-              <span className="sr-only">Search videos</span>
+              <span className="sr-only">Search library</span>
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -843,13 +969,15 @@ export default function Home() {
               />
             </label>
             <select
-              aria-label="Sort videos"
+              aria-label="Sort library"
               value={sort}
               onChange={(event) => setSort(event.target.value)}
             >
               <option value="value">Highest value</option>
               <option value="newest">Newest added</option>
-              <option value="shortest">Shortest first</option>
+              {activeType === "Watch" ? (
+                <option value="shortest">Shortest first</option>
+              ) : null}
             </select>
             <div className="view-toggle" aria-label="Change view">
               <button
@@ -872,11 +1000,16 @@ export default function Home() {
 
         <div className="library-summary">
           <p>
-            <strong>{visibleVideos.length}</strong> videos
-            <span>·</span>
-            <strong>
-              {Math.floor(totalMinutes / 60)}h {totalMinutes % 60}m
-            </strong>
+            <strong>{visibleVideos.length}</strong>{" "}
+            {activeType === "Watch" ? "videos" : "articles"}
+            {activeType === "Watch" ? (
+              <>
+                <span>·</span>
+                <strong>
+                  {Math.floor(totalMinutes / 60)}h {totalMinutes % 60}m
+                </strong>
+              </>
+            ) : null}
             <span>in this view</span>
           </p>
           <p>Prototype scores are shown transparently. AI is not connected yet.</p>
@@ -900,7 +1033,9 @@ export default function Home() {
                 <button
                   className={`video-thumb ${video.accent}`}
                   onClick={() => setSelectedId(video.id)}
-                  aria-label={`Open ${video.title} in RePlay`}
+                  aria-label={`Open ${video.title} in ${
+                    video.type === "Watch" ? "RePlay" : "ReRead"
+                  }`}
                   style={
                     imageUrl
                       ? {
@@ -924,10 +1059,14 @@ export default function Home() {
                         ? "◷"
                         : isInboxReady
                           ? "→"
-                          : "▶"}
+                          : video.type === "Watch"
+                            ? "▶"
+                            : "↗"}
                   </span>
                   <span className="duration">
-                    {formatDuration(video.durationSeconds, video.durationMinutes)}
+                    {video.type === "Watch"
+                      ? formatDuration(video.durationSeconds, video.durationMinutes)
+                      : "Article"}
                   </span>
                   {video.progress > 0 && video.progress < 100 ? (
                     <span className="progress" style={{ width: `${video.progress}%` }} />
@@ -936,7 +1075,15 @@ export default function Home() {
 
                 <div className="card-content">
                   <div className="card-topline">
-                    <span className="topic-badge">{video.topic}</span>
+                    <span className="topic-badges">
+                      {(video.topics.length ? video.topics : ["Unsorted"]).map(
+                        (topic) => (
+                          <span className="topic-badge" key={topic}>
+                            {topic}
+                          </span>
+                        ),
+                      )}
+                    </span>
                     <span className="added-time">
                       {relativeTime(video.addedAt, now || video.addedAt + 60000)}
                     </span>
@@ -980,7 +1127,7 @@ export default function Home() {
                         className="secondary-action"
                         onClick={() => changeStatus(video.id, "queued")}
                       >
-                        Watched ✓
+                        Finished ✓
                       </button>
                     ) : (
                       <button className="secondary-action" disabled>
@@ -990,7 +1137,7 @@ export default function Home() {
                     {canWatch ? (
                       <button
                         className="icon-action"
-                        aria-label={`Mark ${video.title} watched`}
+                        aria-label={`Mark ${video.title} finished`}
                         onClick={() => changeStatus(video.id, "watched")}
                       >
                         ✓
@@ -1014,14 +1161,17 @@ export default function Home() {
           <section className="empty-state">
             <span>0</span>
             <h2>Nothing matches this view.</h2>
-            <p>Try another topic or paste a YouTube link above.</p>
+            <p>
+              Try another topic or paste a{" "}
+              {activeType === "Watch" ? "YouTube" : "blog"} link above.
+            </p>
           </section>
         ) : null}
       </section>
 
       {lastRemoved ? (
         <div className="undo-toast" role="status">
-          <span>Video removed</span>
+          <span>Item removed</span>
           <button onClick={undoRemove}>Undo</button>
           <button aria-label="Dismiss" onClick={() => setLastRemoved(null)}>
             ×
@@ -1035,12 +1185,14 @@ export default function Home() {
             className="replay-modal"
             role="dialog"
             aria-modal="true"
-            aria-label={`${selectedVideo.title} RePlay workspace`}
+            aria-label={`${selectedVideo.title} ${
+              selectedVideo.type === "Watch" ? "RePlay" : "ReRead"
+            } workspace`}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <button
               className="modal-close"
-              aria-label="Close RePlay workspace"
+              aria-label="Close workspace"
               onClick={() => setSelectedId(null)}
             >
               ×
@@ -1053,9 +1205,9 @@ export default function Home() {
                     <p className="eyebrow">Curated discovery</p>
                     <h2>Worth saving?</h2>
                     <p>
-                      Add this video to Inbox to begin its {COOLDOWN_MINUTES}-minute
-                      impulse buffer.
-                      It cannot be watched directly from the curated feed.
+                      Add this {selectedVideo.type === "Watch" ? "video" : "article"}{" "}
+                      to Inbox to begin its {COOLDOWN_MINUTES}-minute impulse buffer.
+                      It cannot be opened directly from the curated feed.
                     </p>
                     <button onClick={() => addToInbox(selectedVideo.id)}>
                       Add to Inbox
@@ -1068,11 +1220,13 @@ export default function Home() {
                     <p className="eyebrow">Impulse buffer</p>
                     <h2>{countdown(selectedVideo.cooldownUntil, now)}</h2>
                     <p>
-                      The video is saved, but not watchable yet. If the urge passes,
-                      remove it. If the value remains, it will unlock automatically.
+                      The {selectedVideo.type === "Watch" ? "video" : "article"} is
+                      saved, but not available yet. If the urge passes, remove it. If
+                      the value remains, it will unlock automatically.
                     </p>
                     <button onClick={() => removeVideo(selectedVideo)}>
-                      I don&apos;t need this video
+                      I don&apos;t need this{" "}
+                      {selectedVideo.type === "Watch" ? "video" : "article"}
                     </button>
                   </div>
                 ) : selectedVideo.status === "inbox" ? (
@@ -1082,53 +1236,74 @@ export default function Home() {
                     <h2>Still valuable?</h2>
                     <p>
                       The initial urge has passed. Move it to Queue only if you still
-                      intend to watch it.
+                      intend to {selectedVideo.type === "Watch" ? "watch" : "read"} it.
                     </p>
                     <button onClick={() => moveToQueue(selectedVideo.id)}>
                       Move to Queue
                     </button>
                   </div>
-                ) : selectedVideo.youtubeId ? (
+                ) : selectedVideo.type === "Watch" && selectedVideo.youtubeId ? (
                   <iframe
                     src={`https://www.youtube-nocookie.com/embed/${selectedVideo.youtubeId}?rel=0`}
                     title={selectedVideo.title}
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                     allowFullScreen
                   />
+                ) : selectedVideo.type === "Read" ? (
+                  <div className="cooldown-screen">
+                    <span className="cooldown-clock ready">↗</span>
+                    <p className="eyebrow">Ready to read</p>
+                    <h2>Open the article</h2>
+                    <p>
+                      ReRead keeps the article and your notes together. The source opens
+                      in a new tab when you are ready.
+                    </p>
+                    <a
+                      className="open-content-button"
+                      href={selectedVideo.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Read article ↗
+                    </a>
+                  </div>
                 ) : (
                   <div className="cooldown-screen">
                     <span className="cooldown-clock">↗</span>
                     <h2>Preview card</h2>
                     <p>
-                      Paste a real YouTube link to test the embedded RePlay player.
+                      Paste a real YouTube link to test the embedded player.
                     </p>
                   </div>
                 )}
               </div>
               <div className="player-details">
                 <div>
-                  <span className="topic-badge">{selectedVideo.topic}</span>
+                  <span className="topic-badges">
+                    {(selectedVideo.topics.length
+                      ? selectedVideo.topics
+                      : ["Unsorted"]
+                    ).map((topic) => (
+                      <span className="topic-badge" key={topic}>
+                        {topic}
+                      </span>
+                    ))}
+                  </span>
                   <h2>{selectedVideo.title}</h2>
                   <p>{selectedVideo.channel}</p>
                 </div>
                 {selectedVideo.status === "queued" ||
                 selectedVideo.status === "watched" ? (
                   <a href={selectedVideo.url} target="_blank" rel="noreferrer">
-                    Open on YouTube ↗
+                    {selectedVideo.type === "Watch"
+                      ? "Open on YouTube ↗"
+                      : "Open article ↗"}
                   </a>
                 ) : null}
               </div>
             </div>
 
             <aside className="ai-column">
-              <header className="ai-header">
-                <div>
-                  <p className="eyebrow">RePlay AI</p>
-                  <h2>Think while you watch.</h2>
-                </div>
-                <span className="prototype-chip">API later</span>
-              </header>
-
               <section className="score-panel">
                 <div className="score-heading">
                   <div>
@@ -1165,6 +1340,51 @@ export default function Home() {
                 )}
               </section>
 
+              <section className="properties-panel" aria-label="Item properties">
+                <div className="property-row">
+                  <span className="property-name">Type</span>
+                  <select
+                    aria-label="Content type"
+                    value={selectedVideo.type}
+                    onChange={(event) =>
+                      updateVideo(selectedVideo.id, {
+                        type: event.target.value as ContentType,
+                      })
+                    }
+                  >
+                    <option value="Watch">Watch</option>
+                    <option value="Read">Read</option>
+                  </select>
+                </div>
+                <div className="property-row topic-property">
+                  <span className="property-name">Topic</span>
+                  <div className="property-topics">
+                    {topicOptions.map((topic) => (
+                      <button
+                        type="button"
+                        key={topic}
+                        aria-pressed={selectedVideo.topics.includes(topic)}
+                        className={
+                          selectedVideo.topics.includes(topic)
+                            ? `property-tag ${topic.toLowerCase()} selected`
+                            : `property-tag ${topic.toLowerCase()}`
+                        }
+                        onClick={() => toggleTopic(selectedVideo.id, topic)}
+                      >
+                        {topic}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="property-save-state">
+                  {cloudStatus === "synced"
+                    ? "Properties synced to D1"
+                    : cloudStatus === "syncing"
+                      ? "Saving properties…"
+                      : "Saved locally; cloud sync will retry"}
+                </p>
+              </section>
+
               <section className="notes-panel">
                 <div className="section-title">
                   <h3>Working notes</h3>
@@ -1192,8 +1412,10 @@ export default function Home() {
                 </div>
                 <div className="ask-input">
                   <input
-                    aria-label="Ask RePlay AI"
-                    placeholder="Ask about this video…"
+                    aria-label="Ask ReSync AI"
+                    placeholder={`Ask about this ${
+                      selectedVideo.type === "Watch" ? "video" : "article"
+                    }…`}
                     disabled
                   />
                   <button disabled>↑</button>
@@ -1202,7 +1424,7 @@ export default function Home() {
               </section>
 
               <button className="modal-remove" onClick={() => removeVideo(selectedVideo)}>
-                Remove from RePlay
+                Remove from {selectedVideo.type === "Watch" ? "RePlay" : "ReRead"}
               </button>
             </aside>
           </section>

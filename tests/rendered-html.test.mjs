@@ -22,16 +22,20 @@ async function render() {
   );
 }
 
-test("server-renders the ReSync RePlay library shell", async () => {
+test("server-renders the ReSync library shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>RePlay — Intentional video library by ReSync<\/title>/i);
-  assert.match(html, /Save the urge\. Watch with intention\./);
+  assert.match(html, /<title>ReSync<\/title>/i);
+  assert.match(html, /Save the urge\./);
+  assert.match(html, /Watch/);
+  assert.match(html, /with intention\./);
   assert.match(html, /Paste a YouTube link/);
-  assert.match(html, /ReSync \/ RePlay/);
+  assert.match(html, /ReSync \//);
+  assert.match(html, /RePlay/);
+  assert.match(html, /ReRead/);
   assert.match(html, /Add to Inbox/);
   assert.match(html, /Curated discoveries become intentional choices/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);

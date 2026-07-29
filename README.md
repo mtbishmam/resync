@@ -1,14 +1,15 @@
-# ReSync — RePlay
+# ReSync
 
-A fast, intentional YouTube watch-later library inside ReSync.
+A fast, intentional video and reading library.
 
-The current version is a frontend-first prototype. RePlay is the curated feed;
-selected videos move through Inbox, a 5-minute testing cooldown, Queue, and
-Watched. The final release will use a 24-hour cooldown.
-Pasted links enter Inbox directly. It supports YouTube metadata enrichment,
+RePlay is the curated video feed and ReRead is the matching blog/article feed.
+Both use Inbox, a 5-minute testing cooldown, Queue, and Finished. The final
+release will use a 24-hour cooldown. Pasted links enter Inbox directly.
+Type (`Watch` or `Read`), multi-select Topics (`AI`, `CP`, `Tech`, and
+`Business`), notes, and workflow state sync to D1. It supports YouTube metadata enrichment,
 duplicate and invalid-link prevention, removal with undo, a fullscreen 70/30
 player and notes workspace, a resizable sidebar, grid/list views, filtering,
-search, sorting, and device-local persistence.
+search, and sorting.
 
 Without `YOUTUBE_API_KEY`, YouTube oEmbed supplies only title, channel, and
 thumbnail. Configure the key server-side to also retrieve duration, description,
@@ -30,6 +31,7 @@ npm run dev
 
 Use `npm run build` to verify the production build.
 
-`OPENAI_API_KEY` is reserved for the upcoming RePlay AI analysis and chat
-backend. Keep both API keys server-side in `.env.local` and in hosted secret
-storage; never expose them to browser code.
+`OPENAI_API_KEY` is reserved for the upcoming transcript analysis and chat
+backend. That analysis will recommend `watch`, `skim`, or `summary_only` based
+on what is genuinely new for the user. Keep both API keys server-side in
+`.env.local` and in hosted secret storage; never expose them to browser code.

@@ -27,7 +27,7 @@ async function showFeedbackNotification(feedback) {
   if (!chrome.notifications?.create) return;
   await chrome.notifications.create(`resync-${feedback.captureId}`, {
     type: "basic",
-    iconUrl: chrome.runtime.getURL("icon.svg"),
+    iconUrl: chrome.runtime.getURL("icons/icon128.png"),
     title: feedback.ok ? "Saved to ReSync" : "ReSync capture needs attention",
     message: feedback.message,
   });

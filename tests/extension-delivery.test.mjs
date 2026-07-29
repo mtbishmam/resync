@@ -194,7 +194,7 @@ test("rapid captures remain separate and acknowledgements remove only their matc
   assert.equal(background.notifications[0].title, "Saved to ReSync");
   assert.equal(
     background.notifications[0].iconUrl,
-    "chrome-extension://resync/icon.svg",
+    "chrome-extension://resync/icons/icon128.png",
   );
   assert.deepEqual(background.badgeUpdates.at(-1), {
     type: "text",

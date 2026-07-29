@@ -197,7 +197,7 @@ async function capture() {
       const message = error instanceof Error ? error.message : String(error);
       if (/cannot access|permission|host/i.test(message)) {
         throw new Error(
-          "ReSync needs access to YouTube. Reload version 0.3.0 and allow its YouTube permission.",
+          "ReSync needs access to YouTube. Reload version 0.3.1 and allow its YouTube permission.",
         );
       }
       throw error;

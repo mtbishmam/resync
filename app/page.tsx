@@ -413,6 +413,16 @@ function formatDuration(seconds?: number, minutes?: number) {
     : `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
+function conciseValueReason(value: string) {
+  const cleanValue = value.replace(/\s+/g, " ").trim();
+  if (!cleanValue) return "AI analysis pending";
+  const firstSentence = cleanValue.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim();
+  const concise = firstSentence || cleanValue;
+  return concise.length > 110
+    ? `${concise.slice(0, 107).trimEnd()}…`
+    : concise;
+}
+
 function normalizeVideo(video: Partial<Video> & { topic?: string }): Video {
   const starterMatch = starterVideos.find((item) => item.id === video.id);
   const addedAt =
@@ -832,6 +842,7 @@ export default function Home() {
               type: "resync-extension-ack",
               captureId: capture.captureId,
               ok: true,
+              message: result.message ?? "Saved to ReSync Inbox.",
             },
             "*",
           );
@@ -847,6 +858,8 @@ export default function Home() {
               type: "resync-extension-ack",
               captureId: capture.captureId,
               ok: false,
+              message:
+                error instanceof Error ? error.message : "Capture failed.",
             },
             "*",
           );
@@ -1933,23 +1946,25 @@ export default function Home() {
                     <span className={video.valueScore ? "value-score" : "value-score pending"}>
                       {video.valueScore ? `${video.valueScore}` : "—"}
                     </span>
-                    <span>
+                    <span className="value-copy">
                       <strong>
                         {video.analysisStatus === "unavailable"
                           ? video.type === "Watch"
                             ? "Transcript unavailable"
                             : "Article text unavailable"
                           : video.analysisStatus === "complete"
-                            ? "AI value score"
+                            ? "AI score"
                             : video.valueScore
                               ? "Prototype value score"
                               : "AI analysis pending"}
                       </strong>
-                      {video.analysisStatus === "unavailable"
-                        ? video.type === "Watch"
-                          ? "Capture or paste the YouTube transcript."
-                          : "Capture this page with the extension."
-                        : video.valueReason}
+                      <span className="value-reason">
+                        {video.analysisStatus === "unavailable"
+                          ? video.type === "Watch"
+                            ? "Capture or paste the YouTube transcript."
+                            : "Capture this page with the extension."
+                          : conciseValueReason(video.valueReason)}
+                      </span>
                     </span>
                   </div>
                   <div className="card-actions">

@@ -251,7 +251,7 @@ async function requestAnalysis(
           role: "system",
           content: `You analyze saved learning content for ReSync. Classify it using only the supplied transcript and metadata. Topics must be a subset of AI, CP (competitive programming), Tech, and Business. Recommend summary_only when the transcript is repetitive, generic, or contains no meaningful non-obvious lesson.
 
-Score personal value as the exact sum of ${SCORING_CRITERIA.map((criterion) => `${criterion.label.toLowerCase()} /${criterion.max}`).join(", ")}. Treat the supplied prior learned knowledge as the user's existing baseline: repeated ideas must reduce novelty, information density, time efficiency, and any actionability that is not genuinely new. Evidence quality should still reflect the source itself. Keep the summary concise and factual. Never infer claims that are absent from the transcript.`,
+Score personal value as the exact sum of ${SCORING_CRITERIA.map((criterion) => `${criterion.label.toLowerCase()} /${criterion.max}`).join(", ")}. Treat the supplied prior learned knowledge as the user's existing baseline: repeated ideas must reduce novelty, information density, time efficiency, and any actionability that is not genuinely new. Evidence quality should still reflect the source itself. Write value_reason as one plain sentence of at most 18 words, focused on the strongest reason to watch or skip. Keep the summary concise and factual. Never infer claims that are absent from the transcript.`,
         },
         {
           role: "user",

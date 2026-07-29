@@ -5,6 +5,7 @@ import {
 } from "../../../db/library";
 import { usageFromPayload, usageStatement } from "../../../lib/ai-usage";
 import { TEXT_MODEL } from "../../../lib/model-config";
+import { loadSourceDocument } from "../../../lib/source-storage";
 
 const MAX_MESSAGE_CHARACTERS = 4_000;
 const MAX_SOURCE_CHARACTERS = 600_000;
@@ -121,12 +122,7 @@ export async function POST(request: Request) {
     }
     const item = itemFromRow(row);
     const [source, note, analysis, history] = await Promise.all([
-      d1
-        .prepare(
-          `SELECT body_text, kind FROM source_documents WHERE item_id = ?1`,
-        )
-        .bind(item.id)
-        .first<{ body_text: string; kind: string }>(),
+      loadSourceDocument({ d1, itemId: item.id }),
       d1
         .prepare("SELECT body_markdown FROM notes WHERE item_id = ?1")
         .bind(item.id)
@@ -154,7 +150,7 @@ export async function POST(request: Request) {
         .all<ChatRow>(),
     ]);
 
-    const sourceText = source?.body_text
+    const sourceText = source?.bodyText
       .slice(0, MAX_SOURCE_CHARACTERS)
       .trim();
     const priorMessages = [...(history.results ?? [])]

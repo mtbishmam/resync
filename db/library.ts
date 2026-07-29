@@ -82,11 +82,16 @@ const CREATE_STATEMENTS = [
     language_codes_json TEXT DEFAULT '[]' NOT NULL,
     model TEXT,
     content_hash TEXT NOT NULL,
+    storage_backend TEXT DEFAULT 'd1' NOT NULL,
+    object_key TEXT,
+    byte_size INTEGER DEFAULT 0 NOT NULL,
+    storage_status TEXT DEFAULT 'ready' NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
   "CREATE UNIQUE INDEX IF NOT EXISTS source_documents_item_id_unique ON source_documents (item_id)",
   "CREATE INDEX IF NOT EXISTS source_documents_hash_idx ON source_documents (content_hash)",
+  "CREATE INDEX IF NOT EXISTS source_documents_object_key_idx ON source_documents (object_key)",
   `INSERT OR IGNORE INTO source_documents (
     id, item_id, body_text, kind, source, language_codes_json, model,
     content_hash, created_at, updated_at

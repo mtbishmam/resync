@@ -1,10 +1,26 @@
 import { itemFromRow } from "../db/library";
 import { usageFromPayload, usageStatement } from "./ai-usage";
 import { SCORING_CRITERIA, TEXT_MODEL } from "./model-config";
+import {
+  MAX_SOURCE_CHARACTERS,
+  storeSourceDocument,
+} from "./source-storage";
+import type {
+  SourceDocumentKind,
+  TranscriptSource,
+} from "./source-storage";
 
 export const ANALYSIS_MODEL = TEXT_MODEL;
 export const PROMPT_VERSION = "resync-transcript-v3-knowledge-aware";
-export const MAX_TRANSCRIPT_CHARACTERS = 900_000;
+export const MAX_TRANSCRIPT_CHARACTERS = MAX_SOURCE_CHARACTERS;
+export {
+  sha256,
+  storeSourceDocument,
+} from "./source-storage";
+export type {
+  SourceDocumentKind,
+  TranscriptSource,
+} from "./source-storage";
 
 const TOPICS = new Set(["AI", "CP", "Tech", "Business"]);
 
@@ -32,16 +48,6 @@ type Analysis = {
     timestamp_seconds: number | null;
   }>;
 };
-
-export type TranscriptSource =
-  | "extension"
-  | "extension-page"
-  | "manual-paste"
-  | "manual-article"
-  | "gpt-transcribe"
-  | "youtube-captions-api";
-
-export type SourceDocumentKind = "video_transcript" | "article";
 
 type AnalysisOptions = {
   d1: D1Database;
@@ -118,79 +124,6 @@ const ANALYSIS_SCHEMA = {
     "learnable_points",
   ],
 } as const;
-
-export async function sha256(value: string) {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-export async function storeSourceDocument({
-  d1,
-  itemId,
-  bodyText,
-  kind,
-  source,
-  languageCodes = [],
-  model = null,
-}: {
-  d1: D1Database;
-  itemId: string;
-  bodyText: string;
-  kind: SourceDocumentKind;
-  source: TranscriptSource;
-  languageCodes?: string[];
-  model?: string | null;
-}) {
-  const cleanBody = bodyText.trim().slice(0, MAX_TRANSCRIPT_CHARACTERS);
-  if (cleanBody.length < 40) {
-    throw new Error("The captured content is too short to analyze.");
-  }
-  const contentHash = await sha256(cleanBody);
-  const now = Date.now();
-  await d1.batch([
-    d1
-      .prepare(
-        `INSERT INTO source_documents (
-          id, item_id, body_text, kind, source, language_codes_json, model,
-          content_hash, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
-        ON CONFLICT(item_id) DO UPDATE SET
-          body_text = excluded.body_text,
-          kind = excluded.kind,
-          source = excluded.source,
-          language_codes_json = excluded.language_codes_json,
-          model = excluded.model,
-          content_hash = excluded.content_hash,
-          updated_at = excluded.updated_at`,
-      )
-      .bind(
-        `source:${itemId}`,
-        itemId,
-        cleanBody,
-        kind,
-        source,
-        JSON.stringify(languageCodes),
-        model,
-        contentHash,
-        now,
-      ),
-    d1
-      .prepare(
-        `UPDATE items
-         SET transcript_status = 'available',
-             analysis_status = 'pending',
-             updated_at = ?2
-         WHERE id = ?1`,
-      )
-      .bind(itemId, now),
-  ]);
-  return { bodyText: cleanBody, contentHash };
-}
 
 function responseText(value: unknown) {
   if (!value || typeof value !== "object") return null;

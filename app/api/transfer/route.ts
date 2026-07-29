@@ -62,6 +62,10 @@ const TABLES = {
     "language_codes_json",
     "model",
     "content_hash",
+    "storage_backend",
+    "object_key",
+    "byte_size",
+    "storage_status",
     "created_at",
     "updated_at",
   ],
@@ -96,6 +100,8 @@ const TABLES = {
 } as const;
 
 type TableName = keyof typeof TABLES;
+const TRANSFER_FORMAT = "resync-hybrid-v2";
+const LEGACY_TRANSFER_FORMAT = "resync-d1-v1";
 
 function noStoreJson(value: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
@@ -112,10 +118,24 @@ export async function GET() {
         return [table, result.results ?? []] as const;
       }),
     );
+    const tables = Object.fromEntries(entries) as Record<
+      string,
+      Array<Record<string, unknown>>
+    >;
+    const sourceManifest = (tables.source_documents ?? []).map((row) => ({
+      itemId: row.item_id,
+      contentHash: row.content_hash,
+      storageBackend: row.storage_backend,
+      objectKey: row.object_key,
+      byteSize: row.byte_size,
+      storageStatus: row.storage_status,
+    }));
     return noStoreJson({
-      format: "resync-d1-v1",
+      format: TRANSFER_FORMAT,
       exportedAt: Date.now(),
-      tables: Object.fromEntries(entries),
+      tables,
+      sourceManifest,
+      sourceContentIncluded: false,
     });
   } catch {
     return noStoreJson(
@@ -138,7 +158,12 @@ export async function POST(request: Request) {
       format?: unknown;
       tables?: Record<string, unknown>;
     };
-    if (payload.format !== "resync-d1-v1" || !payload.tables) {
+    if (
+      ![TRANSFER_FORMAT, LEGACY_TRANSFER_FORMAT].includes(
+        String(payload.format),
+      ) ||
+      !payload.tables
+    ) {
       return noStoreJson(
         { error: "This is not a valid ReSync transfer." },
         { status: 400 },
@@ -169,7 +194,13 @@ export async function POST(request: Request) {
         }
         const row = value as Record<string, unknown>;
         statements.push(
-          d1.prepare(sql).bind(...columns.map((column) => row[column] ?? null)),
+          d1
+            .prepare(sql)
+            .bind(
+              ...columns.map((column) =>
+                transferValue(table, column, row),
+              ),
+            ),
         );
       }
       counts[table] = rows.length;
@@ -184,4 +215,21 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
+}
+
+function transferValue(
+  table: TableName,
+  column: string,
+  row: Record<string, unknown>,
+) {
+  if (row[column] !== undefined && row[column] !== null) return row[column];
+  if (table !== "source_documents") return null;
+  if (column === "storage_backend") return "d1";
+  if (column === "storage_status") return "ready";
+  if (column === "byte_size") {
+    return typeof row.body_text === "string"
+      ? new TextEncoder().encode(row.body_text).byteLength
+      : 0;
+  }
+  return null;
 }

@@ -577,6 +577,7 @@ export default function Home() {
   const [chatBusy, setChatBusy] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
   const metadataRefreshStarted = useRef(false);
+  const sourceMigrationStarted = useRef(false);
   const cloudSyncStarted = useRef(false);
   const analysisStarted = useRef(new Set<string>());
   const extensionCaptureStarted = useRef(new Set<string>());
@@ -796,6 +797,35 @@ export default function Home() {
   }, [ready, sidebarWidth]);
 
   useEffect(() => {
+    if (!ready || !cloudReady || sourceMigrationStarted.current) return;
+    sourceMigrationStarted.current = true;
+    const controller = new AbortController();
+
+    async function migrateLegacySources() {
+      try {
+        for (let batch = 0; batch < 4; batch += 1) {
+          const response = await fetch("/api/storage", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: "migrate", limit: 10 }),
+            signal: controller.signal,
+          });
+          if (!response.ok) return;
+          const result = (await response.json()) as { remaining?: number };
+          if (!result.remaining) return;
+        }
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") {
+          console.error("ReSync source migration deferred", error);
+        }
+      }
+    }
+
+    void migrateLegacySources();
+    return () => controller.abort();
+  }, [cloudReady, ready]);
+
+  useEffect(() => {
     if (!ready || !cloudReady || metadataRefreshStarted.current) return;
     metadataRefreshStarted.current = true;
     videos
@@ -820,6 +850,9 @@ export default function Home() {
           (video.analysisStatus ?? "pending") === "pending",
       )
       .forEach((video) => void requestAnalysis(video.id));
+    // requestAnalysis intentionally uses this render's exact video snapshot;
+    // analysisStarted prevents duplicate requests across subsequent renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloudReady, now, ready, videos]);
 
   useEffect(() => {
@@ -1407,7 +1440,7 @@ export default function Home() {
       }
       setShowTranscriptPaste(false);
       setTranscriptText("");
-      setNotice("Transcript saved to D1 and analyzed.");
+      setNotice("Transcript saved and analyzed.");
       setNoticeTone("success");
     } catch (error) {
       setNotice(

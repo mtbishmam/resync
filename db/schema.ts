@@ -118,12 +118,17 @@ export const sourceDocuments = sqliteTable(
     languageCodesJson: text("language_codes_json").notNull().default("[]"),
     model: text("model"),
     contentHash: text("content_hash").notNull(),
+    storageBackend: text("storage_backend").notNull().default("d1"),
+    objectKey: text("object_key"),
+    byteSize: integer("byte_size").notNull().default(0),
+    storageStatus: text("storage_status").notNull().default("ready"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
     uniqueIndex("source_documents_item_id_unique").on(table.itemId),
     index("source_documents_hash_idx").on(table.contentHash),
+    index("source_documents_object_key_idx").on(table.objectKey),
   ],
 );
 

@@ -29,16 +29,17 @@ Without `YOUTUBE_API_KEY`, YouTube oEmbed supplies only title, channel, and
 thumbnail. Configure the key server-side to also retrieve duration, description,
 publish date, tags, caption availability, and embeddability.
 
-Cloudflare D1 is the durable source of truth. The normalized schema stores
-items, one Markdown note per item, optional note anchors, generic source
-documents (video transcripts or article text), chat threads and messages, and
-versioned AI analyses separately. It also stores AI learning summaries derived
-from the user's own notes and per-item AI usage events. Those learning summaries
-become the prior-knowledge baseline for future scores, reducing novelty,
-information density, time efficiency, and actionability when content repeats
-what the user already learned. Browser storage remains as an instant local cache.
-The previous JSON snapshot migrates into the normalized tables once and remains
-untouched as a backup.
+Cloudflare D1 is the durable source of truth for structured state. Cloudflare R2
+stores full video transcripts and article source text; D1 stores their hashes,
+sizes, storage state, and private object references. The normalized D1 schema
+also stores items, one Markdown note per item, optional note anchors, chat
+threads and messages, and versioned AI analyses separately. It stores AI
+learning summaries derived from the user's own notes and per-item AI usage
+events. Those learning summaries become the prior-knowledge baseline for future
+scores, reducing novelty, information density, time efficiency, and
+actionability when content repeats what the user already learned. Browser
+storage remains as an instant local cache. The previous JSON snapshot migrates
+into the normalized tables once and remains untouched as a backup.
 
 YouTube's official captions API requires OAuth and only permits a transcript
 download when the signed-in account can edit the video. An API key can report
@@ -46,8 +47,8 @@ caption availability but cannot download arbitrary public-video transcripts.
 When that happens, ReSync accepts a full transcript pasted by the user or sent
 by the extension. It can also send an uploaded MP3, MP4, MPEG, MPGA, M4A, WAV,
 or WEBM file (25 MB maximum) to `gpt-transcribe`, with Bengali and English as
-language hints. Uploaded media is processed transiently and is not stored;
-the resulting transcript is saved in D1 before analysis.
+language hints. Uploaded media is processed transiently and is not stored; the
+resulting transcript is saved in R2 and referenced from D1 before analysis.
 
 The Chromium extension in `extension/` first tries to open and read YouTube's
 visible transcript panel. If that fails, its popup accepts a manual transcript.

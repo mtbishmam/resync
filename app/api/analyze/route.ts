@@ -9,6 +9,7 @@ import {
   SourceDocumentKind,
   TranscriptSource,
 } from "../../../lib/transcript-analysis";
+import { loadSourceDocument } from "../../../lib/source-storage";
 
 type CaptionTrack = {
   id: string;
@@ -180,27 +181,18 @@ export async function POST(request: Request) {
       );
     }
 
-    const storedContent = await d1
-      .prepare(
-        `SELECT body_text, kind, source, language_codes_json, model
-         FROM source_documents WHERE item_id = ?1`,
-      )
-      .bind(item.id)
-      .first<{
-        body_text: string;
-        kind: SourceDocumentKind;
-        source: TranscriptSource;
-        language_codes_json: string;
-        model: string | null;
-      }>();
+    const storedContent = await loadSourceDocument({
+      d1,
+      itemId: item.id,
+    });
     if (storedContent) {
       const result = await analyzeAndStoreTranscript({
         d1,
         item,
-        transcript: storedContent.body_text,
+        transcript: storedContent.bodyText,
         source: storedContent.source,
         contentKind: storedContent.kind,
-        languageCodes: JSON.parse(storedContent.language_codes_json) as string[],
+        languageCodes: storedContent.languageCodes,
         transcriptionModel: storedContent.model,
       });
       return noStoreJson(result);

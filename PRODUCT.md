@@ -17,6 +17,58 @@ to actively direct my attention. The app may be assertive, but I retain final
 authority. Its interventions must follow permissions and boundaries that I
 have explicitly configured.
 
+### 1.1 Product Vocabulary
+
+- **ReSync** is a standalone app for intentional video and reading consumption.
+  Its own system includes RePick, RePlay, ReRead, Inbox, Queue, Finished,
+  notes, and content-learning memory.
+- **RePick** is the first and top-level tab. It shows only the three
+  highest-value items selected across all eligible ReSync content, including
+  RePlay, ReRead, their Inboxes, and future feature Inboxes. It is a ranked
+  cross-content view, not another feed or a separate copy of the content.
+- **RePlay** is the video feed and library. It discovers and evaluates videos
+  from followed channels and mentors and handles `Watch` items.
+- **ReRead** is the article and blog feed and library. It discovers and
+  evaluates written content and handles `Read` items.
+- **ReCode** is a content-sprint feature. It lists videos or streams from a
+  chosen mentor or coder and runs a sprint until the selected collection is
+  finished—for example, content from Geothermal, tourist, um_nik, or ecnerwala.
+- **ReSolve** is a standalone competitive-programming problem-learning app.
+  After a problem is solved, it captures the problem and raw thought process,
+  runs an adaptive AI reflection, structures the reusable lessons and mistakes,
+  and schedules future review.
+- **ReFocus** is a standalone focus-control app: my version of FocusMe combined
+  with a Pomodoro app, with timed focus sessions and configurable distraction
+  controls.
+
+RePick and ReCode are planned ReSync capabilities. ReSolve and ReFocus are
+separate app definitions, not ReSync features. Product definitions are planned
+unless their implementation is separately verified.
+
+### 1.2 Shared Platform and Storage Boundary
+
+- The apps should share one Cloudflare account. They should remain on Workers
+  Free until measured usage justifies Workers Paid; “Cloudflare Plus” is not
+  the precise D1 plan name, and Workers Paid is separate from Cloudflare Pro or
+  Business website plans.
+- Each app should have its own D1 database by default. This keeps a storage
+  problem, migration, schema change, or accidental query in one app from
+  taking down the others while retaining one provider and account.
+- D1 should store structured app data, metadata, scores, notes, and compact
+  derived summaries. Large raw transcripts, article source text, exports, and
+  other blob-like data should use Cloudflare R2, with D1 storing references and
+  hashes. Uploaded audio/video remains transient and is not stored unless that
+  privacy decision is explicitly changed later.
+- Current D1 planning figures are 5 GB total account storage on Workers Free,
+  but each Free-plan database is capped at 500 MB. Workers Paid raises the
+  per-database cap to 10 GB and the account cap to 1 TB; the first 5 GB remains
+  included and additional storage is usage-billed. Recheck Cloudflare pricing
+  and limits before deployment because these are provider-controlled values.
+- The storage plan must include usage telemetry, an alert before limits, and a
+  migration path. A paid plan removes the Free-plan hard-stop behavior and
+  raises D1 limits, but does not make storage infinite: a Paid D1 database still
+  has a 10 GB ceiling, and R2 still has usage-based storage and operation costs.
+
 ## 2. Core Objective
 
 At any given moment, the app should help answer:

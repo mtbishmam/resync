@@ -73,6 +73,28 @@ const CREATE_STATEMENTS = [
   )`,
   "CREATE UNIQUE INDEX IF NOT EXISTS transcripts_item_id_unique ON transcripts (item_id)",
   "CREATE INDEX IF NOT EXISTS transcripts_hash_idx ON transcripts (transcript_hash)",
+  `CREATE TABLE IF NOT EXISTS source_documents (
+    id TEXT PRIMARY KEY NOT NULL,
+    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    body_text TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    source TEXT NOT NULL,
+    language_codes_json TEXT DEFAULT '[]' NOT NULL,
+    model TEXT,
+    content_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS source_documents_item_id_unique ON source_documents (item_id)",
+  "CREATE INDEX IF NOT EXISTS source_documents_hash_idx ON source_documents (content_hash)",
+  `INSERT OR IGNORE INTO source_documents (
+    id, item_id, body_text, kind, source, language_codes_json, model,
+    content_hash, created_at, updated_at
+  )
+  SELECT
+    'source:' || item_id, item_id, body_text, 'video_transcript', source,
+    language_codes_json, model, transcript_hash, created_at, updated_at
+  FROM transcripts`,
   `CREATE TABLE IF NOT EXISTS chat_threads (
     id TEXT PRIMARY KEY NOT NULL,
     item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,

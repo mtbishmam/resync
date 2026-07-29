@@ -16,6 +16,15 @@ type NoteRow = {
   body_markdown: string;
 };
 
+type AnalysisRow = {
+  item_id: string;
+  summary_markdown: string;
+  rationale_markdown: string;
+  recommendation: string;
+  learnable_points_json: string;
+  created_at: number;
+};
+
 function noStoreJson(value: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
   headers.set("cache-control", "no-store");
@@ -32,14 +41,32 @@ function parseNotes(value: unknown): Record<string, string> | null {
 export async function GET() {
   try {
     const d1 = await ensureNormalizedLibrary();
-    const [itemResults, noteResults, initialized] = await Promise.all([
+    const [itemResults, noteResults, analysisResults, initialized] =
+      await Promise.all([
       d1.prepare("SELECT * FROM items ORDER BY added_at DESC").all<ItemRow>(),
       d1.prepare("SELECT item_id, body_markdown FROM notes").all<NoteRow>(),
+      d1
+        .prepare(
+          `SELECT item_id, summary_markdown, rationale_markdown, recommendation,
+                  learnable_points_json, created_at
+           FROM ai_analyses ORDER BY created_at DESC`,
+        )
+        .all<AnalysisRow>(),
       d1
         .prepare("SELECT value FROM app_meta WHERE key = ?1")
         .bind(NORMALIZED_LIBRARY_KEY)
         .first<{ value: string }>(),
     ]);
+    const analyses: Record<string, Omit<AnalysisRow, "item_id" | "created_at">> =
+      {};
+    for (const analysis of analysisResults.results ?? []) {
+      analyses[analysis.item_id] ??= {
+        summary_markdown: analysis.summary_markdown,
+        rationale_markdown: analysis.rationale_markdown,
+        recommendation: analysis.recommendation,
+        learnable_points_json: analysis.learnable_points_json,
+      };
+    }
 
     return noStoreJson({
       exists: Boolean(initialized),
@@ -50,6 +77,7 @@ export async function GET() {
           note.body_markdown,
         ]),
       ),
+      analyses,
       updatedAt: Math.max(
         0,
         ...(itemResults.results ?? []).map((item) => item.updated_at),

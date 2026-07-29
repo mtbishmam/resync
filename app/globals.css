@@ -1422,6 +1422,44 @@ button {
   padding-top: 14px;
 }
 
+.analysis-summary {
+  display: grid;
+  gap: 9px;
+  padding-top: 15px;
+  margin-top: 14px;
+  border-top: 1px solid #eeeeeb;
+}
+
+.analysis-summary .recommendation {
+  justify-self: start;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #e8f4ed;
+  color: #287a53;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.analysis-summary .recommendation.skim {
+  background: #fff3d9;
+  color: #926b14;
+}
+
+.analysis-summary .recommendation.summary_only {
+  background: #f6e9e7;
+  color: #a45149;
+}
+
+.analysis-summary p {
+  margin: 0;
+  color: #5f666c;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 .factor-row {
   display: grid;
   grid-template-columns: 104px minmax(40px, 1fr) 33px;
@@ -1688,20 +1726,65 @@ button {
 }
 
 .chat-space {
-  display: grid;
   min-height: 150px;
   flex: 1;
-  place-items: center;
   padding: 18px;
   color: #afb3b7;
   font-size: 9px;
   line-height: 1.55;
+  overflow-y: auto;
+}
+
+.chat-space > p {
+  max-width: 190px;
+  margin: 50px auto 0;
   text-align: center;
 }
 
-.chat-space p {
-  max-width: 190px;
+.chat-messages {
+  display: grid;
+  gap: 10px;
+}
+
+.chat-message {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: #f4f5f2;
+  color: #4f565d;
+}
+
+.chat-message.user {
+  margin-left: 28px;
+  background: #edeafa;
+  color: #554b7e;
+}
+
+.chat-message.assistant {
+  margin-right: 28px;
+}
+
+.chat-message.pending {
+  opacity: 0.65;
+}
+
+.chat-message span {
+  color: #90969b;
+  font-size: 7px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.chat-message p {
+  max-width: none;
   margin: 0;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1.55;
+  text-align: left;
+  white-space: pre-wrap;
 }
 
 .ask-input {
@@ -1717,7 +1800,7 @@ button {
   border: 1px solid #e3e4e0;
   border-radius: 8px;
   background: #f7f7f5;
-  color: #9a9fa4;
+  color: #3e454c;
   font-size: 10px;
 }
 
@@ -1725,8 +1808,14 @@ button {
   width: 34px;
   border: 0;
   border-radius: 8px;
-  background: #d6d8d5;
+  background: #242b34;
   color: #fff;
+  cursor: pointer;
+}
+
+.ask-input button:disabled {
+  background: #d6d8d5;
+  cursor: default;
 }
 
 .ask-panel > p {

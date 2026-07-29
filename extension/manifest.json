@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "ReSync Capture",
+  "version": "0.1.0",
+  "description": "Capture YouTube transcripts and article text into ReSync.",
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": ["https://*.mtbishmam.chatgpt.site/*"],
+  "action": {
+    "default_title": "Capture in ReSync",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.mtbishmam.chatgpt.site/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

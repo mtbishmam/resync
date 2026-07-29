@@ -6,6 +6,7 @@ import {
 import {
   analyzeAndStoreTranscript,
   MAX_TRANSCRIPT_CHARACTERS,
+  SourceDocumentKind,
   TranscriptSource,
 } from "../../../lib/transcript-analysis";
 
@@ -20,7 +21,9 @@ type CaptionTrack = {
 
 const PROVIDED_SOURCES = new Set<TranscriptSource>([
   "extension",
+  "extension-page",
   "manual-paste",
+  "manual-article",
 ]);
 
 function noStoreJson(value: unknown, init?: ResponseInit) {
@@ -115,6 +118,8 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       itemId?: unknown;
       transcript?: unknown;
+      content?: unknown;
+      contentKind?: unknown;
       source?: unknown;
     };
     if (typeof body.itemId !== "string" || !body.itemId) {
@@ -134,26 +139,88 @@ export async function POST(request: Request) {
       return noStoreJson({ error: "ReSync item not found." }, { status: 404 });
     }
     const item = itemFromRow(row);
-    if (item.type !== "Watch" || !item.youtubeId) {
-      return noStoreJson(
-        { error: "Transcript analysis currently supports YouTube videos only." },
-        { status: 400 },
-      );
-    }
 
-    if (typeof body.transcript === "string") {
+    const providedContent =
+      typeof body.content === "string"
+        ? body.content
+        : typeof body.transcript === "string"
+          ? body.transcript
+          : null;
+    if (providedContent !== null) {
       const source =
         typeof body.source === "string" &&
         PROVIDED_SOURCES.has(body.source as TranscriptSource)
           ? (body.source as TranscriptSource)
-          : "manual-paste";
+          : item.type === "Read"
+            ? "manual-article"
+            : "manual-paste";
+      const contentKind: SourceDocumentKind =
+        body.contentKind === "article" || item.type === "Read"
+          ? "article"
+          : "video_transcript";
       const result = await analyzeAndStoreTranscript({
         d1,
         item,
-        transcript: body.transcript,
+        transcript: providedContent,
         source,
+        contentKind,
       });
       return noStoreJson(result);
+    }
+
+    if (item.cooldownUntil > Date.now()) {
+      return noStoreJson(
+        {
+          status: "cooldown_pending",
+          analysisStatus: "pending",
+          cooldownUntil: item.cooldownUntil,
+          message: "Analysis begins when the cooldown ends.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const storedContent = await d1
+      .prepare(
+        `SELECT body_text, kind, source, language_codes_json, model
+         FROM source_documents WHERE item_id = ?1`,
+      )
+      .bind(item.id)
+      .first<{
+        body_text: string;
+        kind: SourceDocumentKind;
+        source: TranscriptSource;
+        language_codes_json: string;
+        model: string | null;
+      }>();
+    if (storedContent) {
+      const result = await analyzeAndStoreTranscript({
+        d1,
+        item,
+        transcript: storedContent.body_text,
+        source: storedContent.source,
+        contentKind: storedContent.kind,
+        languageCodes: JSON.parse(storedContent.language_codes_json) as string[],
+        transcriptionModel: storedContent.model,
+      });
+      return noStoreJson(result);
+    }
+
+    if (item.type === "Read") {
+      await markUnavailable(d1, item.id);
+      return noStoreJson({
+        status: "content_unavailable",
+        transcriptStatus: "unavailable",
+        analysisStatus: "unavailable",
+        message:
+          "Article text is unavailable. Capture the page with the ReSync extension or paste its content.",
+      });
+    }
+    if (!item.youtubeId) {
+      return noStoreJson(
+        { error: "A valid YouTube video is required for transcript analysis." },
+        { status: 400 },
+      );
     }
 
     const transcript = await fetchOfficialTranscript(
@@ -179,6 +246,7 @@ export async function POST(request: Request) {
     });
     return noStoreJson(result);
   } catch (error) {
+    console.error("ReSync content analysis failed", error);
     if (error instanceof Error && error.name === "OpenAINotConfigured") {
       return noStoreJson(
         {
@@ -209,7 +277,7 @@ export async function POST(request: Request) {
         error:
           error instanceof Error && error.message.includes("too short")
             ? error.message
-            : "Transcript analysis is temporarily unavailable.",
+            : "Content analysis is temporarily unavailable.",
         analysisStatus: "error",
       },
       { status: error instanceof Error && error.message.includes("too short") ? 400 : 503 },

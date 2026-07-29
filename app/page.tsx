@@ -30,10 +30,44 @@ type AnalysisApiResult = {
   analysis?: {
     type?: ContentType;
     topics?: Topic[];
+    recommendation?: "watch" | "skim" | "summary_only";
+    summary_markdown?: string;
+    rationale_markdown?: string;
+    learnable_points?: Array<{
+      title: string;
+      detail: string;
+      timestamp_seconds: number | null;
+    }>;
     value_score?: number;
     value_reason?: string;
     valueFactors?: ValueFactor[];
   };
+};
+
+type AnalysisDetail = {
+  summary: string;
+  rationale: string;
+  recommendation: "watch" | "skim" | "summary_only";
+  learnablePoints: Array<{
+    title: string;
+    detail: string;
+    timestampSeconds: number | null;
+  }>;
+};
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+};
+
+type ExtensionCapture = {
+  captureId?: string;
+  url?: string;
+  title?: string;
+  author?: string;
+  content?: string;
 };
 
 type Video = {
@@ -373,6 +407,9 @@ export default function Home() {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [lastRemoved, setLastRemoved] = useState<Video | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [analysisDetails, setAnalysisDetails] = useState<
+    Record<string, AnalysisDetail>
+  >({});
   const [sidebarWidth, setSidebarWidth] = useState(228);
   const [cloudReady, setCloudReady] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>("connecting");
@@ -381,9 +418,14 @@ export default function Home() {
   const [transcriptBusy, setTranscriptBusy] = useState<
     "paste" | "upload" | null
   >(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
   const metadataRefreshStarted = useRef(false);
   const cloudSyncStarted = useRef(false);
   const analysisStarted = useRef(new Set<string>());
+  const extensionCaptureStarted = useRef(new Set<string>());
   const transcriptFileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -431,6 +473,15 @@ export default function Home() {
           exists?: boolean;
           videos?: Partial<Video>[];
           notes?: Record<string, string>;
+          analyses?: Record<
+            string,
+            {
+              summary_markdown?: string;
+              rationale_markdown?: string;
+              recommendation?: string;
+              learnable_points_json?: string;
+            }
+          >;
         };
         const localVideos = readLocalVideos();
         const localNotes = readLocalNotes();
@@ -456,6 +507,51 @@ export default function Home() {
 
         setVideos(nextVideos);
         setNotes(nextNotes);
+        setAnalysisDetails(
+          Object.fromEntries(
+            Object.entries(remote.analyses ?? {}).map(([itemId, analysis]) => {
+              let learnablePoints: AnalysisDetail["learnablePoints"] = [];
+              try {
+                const parsed = JSON.parse(
+                  analysis.learnable_points_json ?? "[]",
+                ) as Array<{
+                  title?: unknown;
+                  detail?: unknown;
+                  timestamp_seconds?: unknown;
+                }>;
+                learnablePoints = parsed
+                  .filter(
+                    (point) =>
+                      typeof point.title === "string" &&
+                      typeof point.detail === "string",
+                  )
+                  .map((point) => ({
+                    title: point.title as string,
+                    detail: point.detail as string,
+                    timestampSeconds:
+                      typeof point.timestamp_seconds === "number"
+                        ? point.timestamp_seconds
+                        : null,
+                  }));
+              } catch {
+                learnablePoints = [];
+              }
+              return [
+                itemId,
+                {
+                  summary: analysis.summary_markdown ?? "",
+                  rationale: analysis.rationale_markdown ?? "",
+                  recommendation: ["watch", "skim", "summary_only"].includes(
+                    analysis.recommendation ?? "",
+                  )
+                    ? (analysis.recommendation as AnalysisDetail["recommendation"])
+                    : "skim",
+                  learnablePoints,
+                },
+              ];
+            }),
+          ),
+        );
         window.localStorage.setItem(CLOUD_SYNCED_KEY, "true");
         setCloudReady(true);
         setCloudStatus("synced");
@@ -480,15 +576,6 @@ export default function Home() {
         .then(() => {
           window.localStorage.removeItem(CLOUD_DIRTY_KEY);
           setCloudStatus("synced");
-          videos
-            .filter(
-              (video) =>
-                video.type === "Watch" &&
-                Boolean(video.youtubeId) &&
-                video.metadataComplete &&
-                (video.analysisStatus ?? "pending") === "pending",
-            )
-            .forEach((video) => void requestAnalysis(video.id));
         })
         .catch((error) => {
           if ((error as Error).name !== "AbortError") {
@@ -509,7 +596,7 @@ export default function Home() {
   }, [ready, sidebarWidth]);
 
   useEffect(() => {
-    if (!ready || metadataRefreshStarted.current) return;
+    if (!ready || !cloudReady || metadataRefreshStarted.current) return;
     metadataRefreshStarted.current = true;
     videos
       .filter(
@@ -521,7 +608,93 @@ export default function Home() {
       .forEach((video) => {
         void enrichMetadata(video.id, video.url, true);
       });
-  }, [ready, videos]);
+  }, [cloudReady, ready, videos]);
+
+  useEffect(() => {
+    if (!ready || !cloudReady || !now) return;
+    videos
+      .filter(
+        (video) =>
+          video.status !== "feed" &&
+          video.cooldownUntil <= now &&
+          (video.analysisStatus ?? "pending") === "pending",
+      )
+      .forEach((video) => void requestAnalysis(video.id));
+  }, [cloudReady, now, ready, videos]);
+
+  useEffect(() => {
+    if (!ready || !cloudReady) return;
+    const onExtensionCapture = (event: MessageEvent) => {
+      if (
+        event.source !== window ||
+        !event.data ||
+        event.data.type !== "resync-extension-capture"
+      ) {
+        return;
+      }
+      const capture = event.data.payload as ExtensionCapture;
+      const captureKey = capture.captureId ?? capture.url ?? "";
+      if (!captureKey || extensionCaptureStarted.current.has(captureKey)) return;
+      extensionCaptureStarted.current.add(captureKey);
+      void fetch("/api/capture", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(capture),
+      })
+        .then(async (response) => {
+          const result = (await response.json().catch(() => null)) as {
+            item?: Partial<Video>;
+            message?: string;
+            error?: string;
+          } | null;
+          if (!response.ok || !result?.item) {
+            throw new Error(result?.error ?? "Capture failed.");
+          }
+          const capturedItem = normalizeVideo(result.item);
+          analysisStarted.current.delete(capturedItem.id);
+          setVideos((current) => {
+            const exists = current.some((video) => video.id === capturedItem.id);
+            return exists
+              ? current.map((video) =>
+                  video.id === capturedItem.id ? capturedItem : video,
+                )
+              : [capturedItem, ...current];
+          });
+          setActiveType(capturedItem.type);
+          setActiveStatus("inbox");
+          setNotice(result.message ?? "Captured in ReSync.");
+          setNoticeTone("success");
+          if (capturedItem.type === "Watch") {
+            void enrichMetadata(capturedItem.id, capturedItem.url, true);
+          }
+          window.postMessage(
+            {
+              type: "resync-extension-ack",
+              captureId: capture.captureId,
+              ok: true,
+            },
+            "*",
+          );
+        })
+        .catch((error) => {
+          extensionCaptureStarted.current.delete(captureKey);
+          setNotice(
+            error instanceof Error ? error.message : "Capture failed.",
+          );
+          setNoticeTone("error");
+          window.postMessage(
+            {
+              type: "resync-extension-ack",
+              captureId: capture.captureId,
+              ok: false,
+            },
+            "*",
+          );
+        });
+    };
+    window.addEventListener("message", onExtensionCapture);
+    return () => window.removeEventListener("message", onExtensionCapture);
+  }, [cloudReady, ready]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -536,7 +709,38 @@ export default function Home() {
     };
   }, [selectedId]);
 
+  useEffect(() => {
+    if (!selectedId) return;
+    const controller = new AbortController();
+    window.queueMicrotask(() => {
+      setChatMessages([]);
+      setChatInput("");
+      setChatLoading(true);
+    });
+    void fetch(`/api/chat?itemId=${encodeURIComponent(selectedId)}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Chat history unavailable.");
+        const result = (await response.json()) as {
+          messages?: ChatMessage[];
+        };
+        setChatMessages(
+          Array.isArray(result.messages) ? result.messages : [],
+        );
+      })
+      .catch((error) => {
+        if ((error as Error).name !== "AbortError") {
+          setChatMessages([]);
+        }
+      })
+      .finally(() => setChatLoading(false));
+    return () => controller.abort();
+  }, [selectedId]);
+
   const selectedVideo = videos.find((video) => video.id === selectedId) ?? null;
+  const selectedAnalysis = selectedId ? analysisDetails[selectedId] : undefined;
 
   const counts = useMemo(
     () => ({
@@ -692,6 +896,30 @@ export default function Home() {
           : video,
       ),
     );
+    if (
+      typeof result.analysis.summary_markdown === "string" &&
+      typeof result.analysis.rationale_markdown === "string" &&
+      ["watch", "skim", "summary_only"].includes(
+        result.analysis.recommendation ?? "",
+      )
+    ) {
+      setAnalysisDetails((current) => ({
+        ...current,
+        [id]: {
+          summary: result.analysis?.summary_markdown ?? "",
+          rationale: result.analysis?.rationale_markdown ?? "",
+          recommendation: result.analysis
+            ?.recommendation as AnalysisDetail["recommendation"],
+          learnablePoints: (result.analysis?.learnable_points ?? []).map(
+            (point) => ({
+              title: point.title,
+              detail: point.detail,
+              timestampSeconds: point.timestamp_seconds,
+            }),
+          ),
+        },
+      }));
+    }
     return true;
   }
 
@@ -708,7 +936,10 @@ export default function Home() {
         .json()
         .catch(() => null)) as AnalysisApiResult | null;
 
-      if (result?.status === "transcript_unavailable") {
+      if (
+        result?.status === "transcript_unavailable" ||
+        result?.status === "content_unavailable"
+      ) {
         setVideos((current) =>
           current.map((video) =>
             video.id === id
@@ -724,6 +955,7 @@ export default function Home() {
         setNoticeTone("info");
         return;
       }
+      if (result?.status === "cooldown_pending") return;
 
       if (!response.ok || !result || !applyAnalysisResult(id, result)) {
         throw new Error(result?.error ?? "Analysis failed");
@@ -732,6 +964,7 @@ export default function Home() {
       setNotice("AI selected the content type and topics from the transcript.");
       setNoticeTone("success");
     } catch {
+      analysisStarted.current.delete(id);
       setVideos((current) =>
         current.map((video) =>
           video.id === id ? { ...video, analysisStatus: "error" } : video,
@@ -817,6 +1050,39 @@ export default function Home() {
       if (transcriptFileInput.current) {
         transcriptFileInput.current.value = "";
       }
+    }
+  }
+
+  async function sendChat(event: FormEvent, itemId: string) {
+    event.preventDefault();
+    const message = chatInput.trim();
+    if (!message || chatBusy) return;
+    setChatBusy(true);
+    setChatInput("");
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ itemId, message }),
+      });
+      const result = (await response.json().catch(() => null)) as {
+        messages?: ChatMessage[];
+        error?: string;
+      } | null;
+      if (!response.ok || !Array.isArray(result?.messages)) {
+        throw new Error(result?.error ?? "ReSync AI could not answer.");
+      }
+      setChatMessages((current) => [...current, ...result.messages!]);
+    } catch (error) {
+      setChatInput(message);
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "ReSync AI is temporarily unavailable.",
+      );
+      setNoticeTone("error");
+    } finally {
+      setChatBusy(false);
     }
   }
 
@@ -1227,8 +1493,8 @@ export default function Home() {
             <span>in this view</span>
           </p>
           <p>
-            GPT-5.4 mini analyzes an item only when its official transcript is
-            accessible.
+            After cooldown, GPT-5.4 mini summarizes and scores captured
+            transcripts or article text.
           </p>
         </div>
 
@@ -1316,7 +1582,9 @@ export default function Home() {
                     <span>
                       <strong>
                         {video.analysisStatus === "unavailable"
-                          ? "Transcript unavailable"
+                          ? video.type === "Watch"
+                            ? "Transcript unavailable"
+                            : "Article text unavailable"
                           : video.analysisStatus === "complete"
                             ? "AI value score"
                             : video.valueScore
@@ -1324,7 +1592,9 @@ export default function Home() {
                               : "AI analysis pending"}
                       </strong>
                       {video.analysisStatus === "unavailable"
-                        ? "Official transcript could not be accessed."
+                        ? video.type === "Watch"
+                          ? "Capture or paste the YouTube transcript."
+                          : "Capture this page with the extension."
                         : video.valueReason}
                     </span>
                   </div>
@@ -1569,7 +1839,9 @@ export default function Home() {
                   </div>
                   <p>
                     {selectedVideo.analysisStatus === "unavailable"
-                      ? "Transcript unavailable — AI analysis was skipped."
+                      ? selectedVideo.type === "Watch"
+                        ? "Transcript unavailable — capture or paste it."
+                        : "Article text unavailable — capture the page."
                       : selectedVideo.valueScore
                         ? selectedVideo.valueReason
                         : "Waiting for transcript analysis."}
@@ -1593,10 +1865,12 @@ export default function Home() {
                   <div className="analysis-empty">
                     <p>
                       {selectedVideo.analysisStatus === "unavailable"
-                        ? "YouTube could not provide this transcript. Upload the recording or paste the full transcript."
+                        ? selectedVideo.type === "Watch"
+                          ? "YouTube could not provide this transcript. Upload the recording or paste the full transcript."
+                          : "Article text was not captured. Save it with the extension."
                         : selectedVideo.analysisStatus === "error"
                           ? "Analysis could not run. You can retry with a pasted transcript or recording."
-                          : "GPT-5.4 mini will select Type and Topics and score the transcript here."}
+                          : "GPT-5.4 mini will summarize and score this content when the cooldown ends."}
                     </p>
                     {selectedVideo.type === "Watch" ? (
                       <div className="transcript-actions">
@@ -1662,6 +1936,22 @@ export default function Home() {
                     ) : null}
                   </div>
                 )}
+                {selectedAnalysis ? (
+                  <div className="analysis-summary">
+                    <span
+                      className={`recommendation ${selectedAnalysis.recommendation}`}
+                    >
+                      {selectedAnalysis.recommendation === "summary_only"
+                        ? "Skip — summary is enough"
+                        : selectedAnalysis.recommendation === "skim"
+                          ? "Skim"
+                          : selectedVideo.type === "Watch"
+                            ? "Worth watching"
+                            : "Worth reading"}
+                    </span>
+                    <p>{selectedAnalysis.summary}</p>
+                  </div>
+                ) : null}
               </section>
 
               <section className="properties-panel" aria-label="Item properties">
@@ -1735,23 +2025,60 @@ export default function Home() {
                   </p>
                 </div>
                 <div className="chat-space">
-                  <p>
-                    Your conversation about this{" "}
-                    {selectedVideo.type === "Watch" ? "video" : "article"} will
-                    appear here.
-                  </p>
+                  {chatLoading ? (
+                    <p>Loading conversation…</p>
+                  ) : chatMessages.length ? (
+                    <div className="chat-messages">
+                      {chatMessages.map((message) => (
+                        <div
+                          className={`chat-message ${message.role}`}
+                          key={message.id}
+                        >
+                          <span>
+                            {message.role === "user" ? "You" : "ReSync AI"}
+                          </span>
+                          <p>{message.content}</p>
+                        </div>
+                      ))}
+                      {chatBusy ? (
+                        <div className="chat-message assistant pending">
+                          <span>ReSync AI</span>
+                          <p>Thinking…</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p>
+                      Ask about this{" "}
+                      {selectedVideo.type === "Watch" ? "video" : "article"}.
+                      ReSync uses the captured source and your notes when
+                      available.
+                    </p>
+                  )}
                 </div>
-                <div className="ask-input">
+                <form
+                  className="ask-input"
+                  onSubmit={(event) => void sendChat(event, selectedVideo.id)}
+                >
                   <input
                     aria-label="Ask ReSync AI"
                     placeholder={`Ask about this ${
                       selectedVideo.type === "Watch" ? "video" : "article"
                     }…`}
-                    disabled
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    disabled={chatBusy}
                   />
-                  <button disabled>↑</button>
-                </div>
-                <p>Chat activates when the OpenAI backend is connected.</p>
+                  <button
+                    aria-label="Send message"
+                    disabled={chatBusy || !chatInput.trim()}
+                  >
+                    ↑
+                  </button>
+                </form>
+                <p>
+                  Conversations are saved in D1 separately from working notes.
+                </p>
               </section>
             </aside>
           </section>

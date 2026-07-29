@@ -105,6 +105,28 @@ export const transcripts = sqliteTable(
   ],
 );
 
+export const sourceDocuments = sqliteTable(
+  "source_documents",
+  {
+    id: text("id").primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    bodyText: text("body_text").notNull(),
+    kind: text("kind").notNull(),
+    source: text("source").notNull(),
+    languageCodesJson: text("language_codes_json").notNull().default("[]"),
+    model: text("model"),
+    contentHash: text("content_hash").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("source_documents_item_id_unique").on(table.itemId),
+    index("source_documents_hash_idx").on(table.contentHash),
+  ],
+);
+
 export const chatThreads = sqliteTable(
   "chat_threads",
   {

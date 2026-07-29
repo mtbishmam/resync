@@ -18,10 +18,11 @@ thumbnail. Configure the key server-side to also retrieve duration, description,
 publish date, tags, caption availability, and embeddability.
 
 Cloudflare D1 is the durable source of truth. The normalized schema stores
-items, one Markdown note per item, optional note anchors, raw transcripts,
-chat threads and messages, and versioned AI analyses separately. Browser
-storage remains as an instant local cache. The previous JSON snapshot migrates
-into the normalized tables once and remains untouched as a backup.
+items, one Markdown note per item, optional note anchors, generic source
+documents (video transcripts or article text), chat threads and messages, and
+versioned AI analyses separately. Browser storage remains as an instant local
+cache. The previous JSON snapshot migrates into the normalized tables once and
+remains untouched as a backup.
 
 YouTube's official captions API requires OAuth and only permits a transcript
 download when the signed-in account can edit the video. An API key can report
@@ -31,6 +32,17 @@ by the extension. It can also send an uploaded MP3, MP4, MPEG, MPGA, M4A, WAV,
 or WEBM file (25 MB maximum) to `gpt-transcribe`, with Bengali and English as
 language hints. Uploaded media is processed transiently and is not stored;
 the resulting transcript is saved in D1 before analysis.
+
+The Chromium extension in `extension/` first tries to open and read YouTube's
+visible transcript panel. If that fails, its popup accepts a manual transcript.
+Every other HTTP(S) page is treated as an article unless the extension later
+adds an explicit site rule. It extracts readable page text and hands it to the
+private ReSync site. GPT-5.4 mini runs only after the cooldown ends, then adds a
+summary, value score, and `watch`, `skim`, or `summary_only` recommendation.
+
+The item chat is active and stored in `chat_threads` and `chat_messages`,
+separately from working notes. Each answer is grounded in the captured source,
+latest analysis, and the item's Markdown note when available.
 
 ## Run locally
 
@@ -48,17 +60,20 @@ Set `OPENAI_API_KEY` for the pinned `gpt-5.4-mini-2026-03-17` analysis model and
 `gpt-transcribe`. Keep API credentials server-side in `.env.local` and in hosted
 secret storage; never expose them to browser code.
 
-## Extension transcript contract
+## Extension capture
 
-After adding the YouTube URL to ReSync, the extension can submit a copied
-transcript with:
+Load `extension/` as an unpacked extension from `brave://extensions`. The
+extension stores a pending capture locally, opens the private ReSync URL, and
+uses its bridge content script to hand the capture to the authenticated app.
+The app accepts:
 
 ```json
 {
-  "itemId": "the-resync-item-id",
-  "transcript": "the full copied transcript",
-  "source": "extension"
+  "url": "https://example.com/item",
+  "title": "Page title",
+  "author": "Channel or hostname",
+  "content": "YouTube transcript or readable article text"
 }
 ```
 
-Send this JSON in a `POST` request to `/api/analyze`.
+The app saves this JSON through `POST /api/capture`.

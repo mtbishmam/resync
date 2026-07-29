@@ -33,15 +33,20 @@ type Analysis = {
 
 export type TranscriptSource =
   | "extension"
+  | "extension-page"
   | "manual-paste"
+  | "manual-article"
   | "gpt-transcribe"
   | "youtube-captions-api";
+
+export type SourceDocumentKind = "video_transcript" | "article";
 
 type AnalysisOptions = {
   d1: D1Database;
   item: ReturnType<typeof itemFromRow>;
   transcript: string;
   source: TranscriptSource;
+  contentKind?: SourceDocumentKind;
   languageCodes?: string[];
   transcriptionModel?: string | null;
 };
@@ -53,7 +58,6 @@ const ANALYSIS_SCHEMA = {
     type: { type: "string", enum: ["Watch", "Read"] },
     topics: {
       type: "array",
-      uniqueItems: true,
       items: { type: "string", enum: ["AI", "CP", "Tech", "Business"] },
     },
     recommendation: {
@@ -121,6 +125,69 @@ export async function sha256(value: string) {
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+export async function storeSourceDocument({
+  d1,
+  itemId,
+  bodyText,
+  kind,
+  source,
+  languageCodes = [],
+  model = null,
+}: {
+  d1: D1Database;
+  itemId: string;
+  bodyText: string;
+  kind: SourceDocumentKind;
+  source: TranscriptSource;
+  languageCodes?: string[];
+  model?: string | null;
+}) {
+  const cleanBody = bodyText.trim().slice(0, MAX_TRANSCRIPT_CHARACTERS);
+  if (cleanBody.length < 40) {
+    throw new Error("The captured content is too short to analyze.");
+  }
+  const contentHash = await sha256(cleanBody);
+  const now = Date.now();
+  await d1.batch([
+    d1
+      .prepare(
+        `INSERT INTO source_documents (
+          id, item_id, body_text, kind, source, language_codes_json, model,
+          content_hash, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+        ON CONFLICT(item_id) DO UPDATE SET
+          body_text = excluded.body_text,
+          kind = excluded.kind,
+          source = excluded.source,
+          language_codes_json = excluded.language_codes_json,
+          model = excluded.model,
+          content_hash = excluded.content_hash,
+          updated_at = excluded.updated_at`,
+      )
+      .bind(
+        `source:${itemId}`,
+        itemId,
+        cleanBody,
+        kind,
+        source,
+        JSON.stringify(languageCodes),
+        model,
+        contentHash,
+        now,
+      ),
+    d1
+      .prepare(
+        `UPDATE items
+         SET transcript_status = 'available',
+             analysis_status = 'pending',
+             updated_at = ?2
+         WHERE id = ?1`,
+      )
+      .bind(itemId, now),
+  ]);
+  return { bodyText: cleanBody, contentHash };
 }
 
 function responseText(value: unknown) {
@@ -248,51 +315,21 @@ export async function analyzeAndStoreTranscript({
   item,
   transcript,
   source,
+  contentKind = item.type === "Read" ? "article" : "video_transcript",
   languageCodes = [],
   transcriptionModel = null,
 }: AnalysisOptions) {
-  const cleanTranscript = transcript.trim().slice(0, MAX_TRANSCRIPT_CHARACTERS);
-  if (cleanTranscript.length < 40) {
-    throw new Error("The transcript is too short to analyze.");
-  }
-
-  const transcriptHash = await sha256(cleanTranscript);
-  const now = Date.now();
-  await d1.batch([
-    d1
-      .prepare(
-        `INSERT INTO transcripts (
-          id, item_id, body_text, source, language_codes_json, model,
-          transcript_hash, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
-        ON CONFLICT(item_id) DO UPDATE SET
-          body_text = excluded.body_text,
-          source = excluded.source,
-          language_codes_json = excluded.language_codes_json,
-          model = excluded.model,
-          transcript_hash = excluded.transcript_hash,
-          updated_at = excluded.updated_at`,
-      )
-      .bind(
-        `transcript:${item.id}`,
-        item.id,
-        cleanTranscript,
-        source,
-        JSON.stringify(languageCodes),
-        transcriptionModel,
-        transcriptHash,
-        now,
-      ),
-    d1
-      .prepare(
-        `UPDATE items
-         SET transcript_status = 'available',
-             analysis_status = 'pending',
-             updated_at = ?2
-         WHERE id = ?1`,
-      )
-      .bind(item.id, now),
-  ]);
+  const stored = await storeSourceDocument({
+    d1,
+    itemId: item.id,
+    bodyText: transcript,
+    kind: contentKind,
+    source,
+    languageCodes,
+    model: transcriptionModel,
+  });
+  const cleanTranscript = stored.bodyText;
+  const transcriptHash = stored.contentHash;
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {

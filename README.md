@@ -32,9 +32,13 @@ publish date, tags, caption availability, and embeddability.
 Cloudflare D1 is the durable source of truth. The normalized schema stores
 items, one Markdown note per item, optional note anchors, generic source
 documents (video transcripts or article text), chat threads and messages, and
-versioned AI analyses separately. Browser storage remains as an instant local
-cache. The previous JSON snapshot migrates into the normalized tables once and
-remains untouched as a backup.
+versioned AI analyses separately. It also stores AI learning summaries derived
+from the user's own notes and per-item AI usage events. Those learning summaries
+become the prior-knowledge baseline for future scores, reducing novelty,
+information density, time efficiency, and actionability when content repeats
+what the user already learned. Browser storage remains as an instant local cache.
+The previous JSON snapshot migrates into the normalized tables once and remains
+untouched as a backup.
 
 YouTube's official captions API requires OAuth and only permits a transcript
 download when the signed-in account can edit the video. An API key can report
@@ -55,6 +59,13 @@ summary, value score, and `watch`, `skim`, or `summary_only` recommendation.
 The item chat is active and stored in `chat_threads` and `chat_messages`,
 separately from working notes. Each answer is grounded in the captured source,
 latest analysis, and the item's Markdown note when available.
+
+The profile panel lists saved notes by date with topic filters, shows the
+AI-generated learning summaries, documents the five scoring factors and active
+models, and reports request-level token usage. Cost figures use standard API
+list prices when a public model price is available; account-wide free allowances
+are not subtracted because individual API responses do not report whether those
+credits were applied.
 
 ## Run locally
 

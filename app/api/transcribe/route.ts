@@ -3,9 +3,10 @@ import {
   itemFromRow,
   ItemRow,
 } from "../../../db/library";
+import { usageFromPayload, usageStatement } from "../../../lib/ai-usage";
+import { TRANSCRIPTION_MODEL } from "../../../lib/model-config";
 import { analyzeAndStoreTranscript } from "../../../lib/transcript-analysis";
 
-const TRANSCRIPTION_MODEL = "gpt-transcribe";
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const SUPPORTED_EXTENSIONS = new Set([
   "mp3",
@@ -111,6 +112,7 @@ export async function POST(request: Request) {
     const transcription = (await transcriptionResponse.json()) as {
       text?: unknown;
       languages?: Array<{ code?: unknown }>;
+      usage?: unknown;
     };
     if (typeof transcription.text !== "string" || !transcription.text.trim()) {
       throw new Error("OpenAI returned an empty transcript.");
@@ -122,6 +124,12 @@ export async function POST(request: Request) {
           )
           .filter((code): code is string => Boolean(code))
       : [];
+    await usageStatement(d1, {
+      itemId: item.id,
+      purpose: "transcription",
+      model: TRANSCRIPTION_MODEL,
+      usage: usageFromPayload(transcription),
+    }).run();
 
     const result = await analyzeAndStoreTranscript({
       d1,

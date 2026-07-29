@@ -133,6 +133,33 @@ const CREATE_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS ai_analyses_version_unique
     ON ai_analyses (item_id, transcript_hash, model, prompt_version)`,
   "CREATE INDEX IF NOT EXISTS ai_analyses_item_id_idx ON ai_analyses (item_id)",
+  `CREATE TABLE IF NOT EXISTS learned_summaries (
+    id TEXT PRIMARY KEY NOT NULL,
+    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    note_hash TEXT NOT NULL,
+    summary_markdown TEXT NOT NULL,
+    topics_json TEXT DEFAULT '[]' NOT NULL,
+    model TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS learned_summaries_item_id_unique ON learned_summaries (item_id)",
+  "CREATE INDEX IF NOT EXISTS learned_summaries_updated_at_idx ON learned_summaries (updated_at)",
+  `CREATE TABLE IF NOT EXISTS ai_usage_events (
+    id TEXT PRIMARY KEY NOT NULL,
+    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER DEFAULT 0 NOT NULL,
+    cached_input_tokens INTEGER DEFAULT 0 NOT NULL,
+    audio_input_tokens INTEGER DEFAULT 0 NOT NULL,
+    output_tokens INTEGER DEFAULT 0 NOT NULL,
+    total_tokens INTEGER DEFAULT 0 NOT NULL,
+    estimated_cost_micros INTEGER,
+    created_at INTEGER NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS ai_usage_events_item_id_idx ON ai_usage_events (item_id)",
+  "CREATE INDEX IF NOT EXISTS ai_usage_events_created_at_idx ON ai_usage_events (created_at)",
   `CREATE TABLE IF NOT EXISTS app_meta (
     key TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL,
@@ -403,9 +430,13 @@ export function upsertNoteStatement(
     .prepare(
       `INSERT INTO notes (id, item_id, body_markdown, created_at, updated_at)
        VALUES (?1, ?2, ?3, ?4, ?4)
-       ON CONFLICT(item_id) DO UPDATE SET
+      ON CONFLICT(item_id) DO UPDATE SET
          body_markdown = excluded.body_markdown,
-         updated_at = excluded.updated_at`,
+         updated_at = CASE
+           WHEN notes.body_markdown <> excluded.body_markdown
+             THEN excluded.updated_at
+           ELSE notes.updated_at
+         END`,
     )
     .bind(`note:${itemId}`, itemId, markdown, updatedAt);
 }

@@ -189,6 +189,49 @@ export const aiAnalyses = sqliteTable(
   ],
 );
 
+export const learnedSummaries = sqliteTable(
+  "learned_summaries",
+  {
+    id: text("id").primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    noteHash: text("note_hash").notNull(),
+    summaryMarkdown: text("summary_markdown").notNull(),
+    topicsJson: text("topics_json").notNull().default("[]"),
+    model: text("model").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("learned_summaries_item_id_unique").on(table.itemId),
+    index("learned_summaries_updated_at_idx").on(table.updatedAt),
+  ],
+);
+
+export const aiUsageEvents = sqliteTable(
+  "ai_usage_events",
+  {
+    id: text("id").primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    purpose: text("purpose").notNull(),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
+    audioInputTokens: integer("audio_input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    totalTokens: integer("total_tokens").notNull().default(0),
+    estimatedCostMicros: integer("estimated_cost_micros"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    index("ai_usage_events_item_id_idx").on(table.itemId),
+    index("ai_usage_events_created_at_idx").on(table.createdAt),
+  ],
+);
+
 export const appMeta = sqliteTable("app_meta", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),

@@ -3,6 +3,7 @@
 import {
   CSSProperties,
   FormEvent,
+  ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -60,6 +61,33 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   createdAt: number;
+};
+
+type KnowledgeSummary = {
+  summary: string;
+  noteHash: string;
+  topics: string[];
+  model: string;
+  updatedAt: number;
+};
+
+type UsageEvent = {
+  id: string;
+  item_id: string;
+  purpose: "analysis" | "chat" | "knowledge" | "transcription";
+  model: string;
+  input_tokens: number;
+  cached_input_tokens: number;
+  audio_input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_cost_micros: number | null;
+  created_at: number;
+};
+
+type ModelConfig = {
+  text: string;
+  transcription: string;
 };
 
 type ExtensionCapture = {
@@ -280,6 +308,100 @@ function countdown(until: number, now: number) {
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+function renderInlineMarkdown(value: string): ReactNode[] {
+  const pattern =
+    /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
+  return value.split(pattern).filter(Boolean).map((part, index) => {
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={index}>{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
+    }
+    const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
+    if (link) {
+      return (
+        <a key={index} href={link[2]} target="_blank" rel="noreferrer">
+          {link[1]}
+        </a>
+      );
+    }
+    return part;
+  });
+}
+
+function MarkdownText({
+  content,
+  className,
+}: {
+  content: string;
+  className?: string;
+}) {
+  const blocks = content.trim().split(/\n{2,}/).filter(Boolean);
+  return (
+    <div className={className ? `markdown ${className}` : "markdown"}>
+      {blocks.map((block, index) => {
+        const lines = block.split("\n");
+        if (lines.every((line) => /^[-*]\s+/.test(line))) {
+          return (
+            <ul key={index}>
+              {lines.map((line, lineIndex) => (
+                <li key={lineIndex}>
+                  {renderInlineMarkdown(line.replace(/^[-*]\s+/, ""))}
+                </li>
+              ))}
+            </ul>
+          );
+        }
+        if (lines.every((line) => /^\d+\.\s+/.test(line))) {
+          return (
+            <ol key={index}>
+              {lines.map((line, lineIndex) => (
+                <li key={lineIndex}>
+                  {renderInlineMarkdown(line.replace(/^\d+\.\s+/, ""))}
+                </li>
+              ))}
+            </ol>
+          );
+        }
+        if (/^```[\s\S]*```$/.test(block)) {
+          return (
+            <pre key={index}>
+              <code>{block.replace(/^```[^\n]*\n?/, "").replace(/```$/, "")}</code>
+            </pre>
+          );
+        }
+        const heading = block.match(/^(#{1,4})\s+(.+)$/);
+        if (heading) {
+          return <h4 key={index}>{renderInlineMarkdown(heading[2])}</h4>;
+        }
+        return (
+          <p key={index}>
+            {lines.map((line, lineIndex) => (
+              <span key={lineIndex}>
+                {renderInlineMarkdown(line)}
+                {lineIndex < lines.length - 1 ? <br /> : null}
+              </span>
+            ))}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function compactModelName(model: string) {
+  return model.replace(/-2026-\d{2}-\d{2}$/, "");
+}
+
+function moneyFromMicros(micros: number) {
+  const dollars = micros / 1_000_000;
+  return dollars < 0.01 ? `$${dollars.toFixed(4)}` : `$${dollars.toFixed(2)}`;
+}
+
 function formatDuration(seconds?: number, minutes?: number) {
   const totalSeconds = seconds ?? (minutes ? minutes * 60 : 0);
   if (!totalSeconds) return "duration unavailable";
@@ -386,6 +508,10 @@ async function saveCloudLibrary(
     signal,
   });
   if (!response.ok) throw new Error("Cloud save failed");
+  return (await response.json()) as {
+    saved?: boolean;
+    knowledgeStaleIds?: string[];
+  };
 }
 
 export default function Home() {
@@ -407,9 +533,26 @@ export default function Home() {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [lastRemoved, setLastRemoved] = useState<Video | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [noteUpdatedAt, setNoteUpdatedAt] = useState<Record<string, number>>({});
   const [analysisDetails, setAnalysisDetails] = useState<
     Record<string, AnalysisDetail>
   >({});
+  const [knowledgeSummaries, setKnowledgeSummaries] = useState<
+    Record<string, KnowledgeSummary>
+  >({});
+  const [usageEvents, setUsageEvents] = useState<UsageEvent[]>([]);
+  const [models, setModels] = useState<ModelConfig>({
+    text: "gpt-5.4-mini-2026-03-17",
+    transcription: "gpt-transcribe",
+  });
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileTab, setProfileTab] = useState<
+    "notes" | "knowledge" | "scoring" | "usage"
+  >("notes");
+  const [profileTopic, setProfileTopic] = useState<"All" | Topic>("All");
+  const [knowledgeBusyIds, setKnowledgeBusyIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [sidebarWidth, setSidebarWidth] = useState(228);
   const [cloudReady, setCloudReady] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>("connecting");
@@ -426,7 +569,10 @@ export default function Home() {
   const cloudSyncStarted = useRef(false);
   const analysisStarted = useRef(new Set<string>());
   const extensionCaptureStarted = useRef(new Set<string>());
+  const knowledgeStarted = useRef(new Set<string>());
+  const knowledgeQueued = useRef(new Set<string>());
   const transcriptFileInput = useRef<HTMLInputElement>(null);
+  const chatMessagesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     window.queueMicrotask(() => {
@@ -473,6 +619,7 @@ export default function Home() {
           exists?: boolean;
           videos?: Partial<Video>[];
           notes?: Record<string, string>;
+          noteUpdatedAt?: Record<string, number>;
           analyses?: Record<
             string,
             {
@@ -482,6 +629,9 @@ export default function Home() {
               learnable_points_json?: string;
             }
           >;
+          knowledge?: Record<string, KnowledgeSummary>;
+          usageEvents?: UsageEvent[];
+          models?: ModelConfig;
         };
         const localVideos = readLocalVideos();
         const localNotes = readLocalNotes();
@@ -507,6 +657,12 @@ export default function Home() {
 
         setVideos(nextVideos);
         setNotes(nextNotes);
+        setNoteUpdatedAt(remote.noteUpdatedAt ?? {});
+        setKnowledgeSummaries(remote.knowledge ?? {});
+        setUsageEvents(
+          Array.isArray(remote.usageEvents) ? remote.usageEvents : [],
+        );
+        if (remote.models) setModels(remote.models);
         setAnalysisDetails(
           Object.fromEntries(
             Object.entries(remote.analyses ?? {}).map(([itemId, analysis]) => {
@@ -573,9 +729,10 @@ export default function Home() {
     const timer = window.setTimeout(() => {
       setCloudStatus("syncing");
       void saveCloudLibrary(videos, notes, controller.signal)
-        .then(() => {
+        .then((result) => {
           window.localStorage.removeItem(CLOUD_DIRTY_KEY);
           setCloudStatus("synced");
+          void refreshKnowledgeSummaries(result.knowledgeStaleIds ?? []);
         })
         .catch((error) => {
           if ((error as Error).name !== "AbortError") {
@@ -587,6 +744,9 @@ export default function Home() {
       window.clearTimeout(timer);
       controller.abort();
     };
+    // The refresh function intentionally uses the exact videos/notes snapshot
+    // that produced this successful cloud save.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloudReady, notes, ready, videos]);
 
   useEffect(() => {
@@ -697,9 +857,12 @@ export default function Home() {
   }, [cloudReady, ready]);
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId && !profileOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedId(null);
+      if (event.key === "Escape") {
+        if (profileOpen) setProfileOpen(false);
+        else setSelectedId(null);
+      }
     };
     document.body.classList.add("modal-open");
     window.addEventListener("keydown", onKeyDown);
@@ -707,7 +870,7 @@ export default function Home() {
       document.body.classList.remove("modal-open");
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [selectedId]);
+  }, [profileOpen, selectedId]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -738,6 +901,33 @@ export default function Home() {
       .finally(() => setChatLoading(false));
     return () => controller.abort();
   }, [selectedId]);
+
+  useEffect(() => {
+    chatMessagesRef.current?.scrollTo({
+      top: chatMessagesRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [chatBusy, chatMessages]);
+
+  useEffect(() => {
+    if (!profileOpen || profileTab !== "usage") return;
+    const controller = new AbortController();
+    void fetch("/api/library", {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const result = (await response.json()) as {
+          usageEvents?: UsageEvent[];
+        };
+        if (Array.isArray(result.usageEvents)) {
+          setUsageEvents(result.usageEvents);
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [profileOpen, profileTab]);
 
   const selectedVideo = videos.find((video) => video.id === selectedId) ?? null;
   const selectedAnalysis = selectedId ? analysisDetails[selectedId] : undefined;
@@ -803,6 +993,146 @@ export default function Home() {
     (sum, video) => sum + video.durationMinutes,
     0,
   );
+
+  const profileNotes = useMemo(
+    () =>
+      videos
+        .filter(
+          (video) =>
+            (notes[video.id] ?? "").trim() &&
+            (profileTopic === "All" || video.topics.includes(profileTopic)),
+        )
+        .sort(
+          (a, b) =>
+            (noteUpdatedAt[b.id] ?? b.addedAt) -
+            (noteUpdatedAt[a.id] ?? a.addedAt),
+        ),
+    [noteUpdatedAt, notes, profileTopic, videos],
+  );
+
+  const profileKnowledge = useMemo(
+    () =>
+      videos
+        .filter(
+          (video) =>
+            knowledgeSummaries[video.id] &&
+            (profileTopic === "All" || video.topics.includes(profileTopic)),
+        )
+        .sort(
+          (a, b) =>
+            knowledgeSummaries[b.id].updatedAt -
+            knowledgeSummaries[a.id].updatedAt,
+        ),
+    [knowledgeSummaries, profileTopic, videos],
+  );
+
+  const usageByItem = useMemo(() => {
+    const summaries = new Map<
+      string,
+      {
+        events: number;
+        textInput: number;
+        cachedInput: number;
+        textOutput: number;
+        transcriptionInput: number;
+        transcriptOutput: number;
+        costMicros: number;
+        unknownCost: boolean;
+        models: Set<string>;
+        lastUsedAt: number;
+      }
+    >();
+    for (const event of usageEvents) {
+      const summary = summaries.get(event.item_id) ?? {
+        events: 0,
+        textInput: 0,
+        cachedInput: 0,
+        textOutput: 0,
+        transcriptionInput: 0,
+        transcriptOutput: 0,
+        costMicros: 0,
+        unknownCost: false,
+        models: new Set<string>(),
+        lastUsedAt: 0,
+      };
+      summary.events += 1;
+      summary.models.add(event.model);
+      summary.lastUsedAt = Math.max(summary.lastUsedAt, event.created_at);
+      if (event.purpose === "transcription") {
+        summary.transcriptionInput +=
+          event.audio_input_tokens || event.input_tokens;
+        summary.transcriptOutput += event.output_tokens;
+      } else {
+        summary.textInput += event.input_tokens;
+        summary.cachedInput += event.cached_input_tokens;
+        summary.textOutput += event.output_tokens;
+      }
+      if (event.estimated_cost_micros === null) summary.unknownCost = true;
+      else summary.costMicros += event.estimated_cost_micros;
+      summaries.set(event.item_id, summary);
+    }
+    return summaries;
+  }, [usageEvents]);
+
+  async function refreshKnowledgeSummaries(itemIds: string[]) {
+    for (const itemId of itemIds) {
+      if (knowledgeStarted.current.has(itemId)) {
+        knowledgeQueued.current.add(itemId);
+        continue;
+      }
+      knowledgeStarted.current.add(itemId);
+      setKnowledgeBusyIds((current) => new Set(current).add(itemId));
+      try {
+        const response = await fetch("/api/knowledge", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ itemId }),
+        });
+        const result = (await response.json().catch(() => null)) as {
+          status?: string;
+          summary?: string;
+          noteHash?: string;
+          model?: string;
+          updatedAt?: number;
+        } | null;
+        if (
+          response.ok &&
+          result?.summary &&
+          result.noteHash &&
+          result.model &&
+          result.updatedAt
+        ) {
+          const video = videos.find((entry) => entry.id === itemId);
+          setKnowledgeSummaries((current) => ({
+            ...current,
+            [itemId]: {
+              summary: result.summary!,
+              noteHash: result.noteHash!,
+              model: result.model!,
+              updatedAt: result.updatedAt!,
+              topics: video?.topics ?? [],
+            },
+          }));
+        } else if (response.ok && result?.status === "empty") {
+          setKnowledgeSummaries((current) => {
+            const next = { ...current };
+            delete next[itemId];
+            return next;
+          });
+        }
+      } finally {
+        knowledgeStarted.current.delete(itemId);
+        setKnowledgeBusyIds((current) => {
+          const next = new Set(current);
+          next.delete(itemId);
+          return next;
+        });
+        if (knowledgeQueued.current.delete(itemId)) {
+          void refreshKnowledgeSummaries([itemId]);
+        }
+      }
+    }
+  }
 
   async function enrichMetadata(id: string, videoUrl: string, quiet = false) {
     try {
@@ -1057,8 +1387,18 @@ export default function Home() {
     event.preventDefault();
     const message = chatInput.trim();
     if (!message || chatBusy) return;
+    const optimisticId = `pending:${Date.now()}`;
     setChatBusy(true);
     setChatInput("");
+    setChatMessages((current) => [
+      ...current,
+      {
+        id: optimisticId,
+        role: "user",
+        content: message,
+        createdAt: Date.now(),
+      },
+    ]);
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -1072,8 +1412,14 @@ export default function Home() {
       if (!response.ok || !Array.isArray(result?.messages)) {
         throw new Error(result?.error ?? "ReSync AI could not answer.");
       }
-      setChatMessages((current) => [...current, ...result.messages!]);
+      setChatMessages((current) => [
+        ...current.filter((entry) => entry.id !== optimisticId),
+        ...result.messages!,
+      ]);
     } catch (error) {
+      setChatMessages((current) =>
+        current.filter((entry) => entry.id !== optimisticId),
+      );
       setChatInput(message);
       setNotice(
         error instanceof Error
@@ -1345,7 +1691,7 @@ export default function Home() {
                     : "Connecting…"}
             </span>
           </div>
-          <div className="storage-track">
+          <div className={`storage-track ${cloudStatus}`}>
             <span style={{ width: `${Math.min(100, videos.length * 7)}%` }} />
           </div>
           <p>{videos.length} items · available across your devices.</p>
@@ -1385,7 +1731,15 @@ export default function Home() {
               Curated discoveries become intentional choices: Inbox, cooldown, then Queue.
             </p>
           </div>
-          <div className="profile">MT</div>
+          <button
+            type="button"
+            className="profile"
+            aria-label="Open notes and AI settings"
+            aria-expanded={profileOpen}
+            onClick={() => setProfileOpen(true)}
+          >
+            MT
+          </button>
         </header>
 
         <section
@@ -1703,6 +2057,340 @@ export default function Home() {
         </div>
       ) : null}
 
+      {profileOpen ? (
+        <div
+          className="profile-backdrop"
+          role="presentation"
+          onMouseDown={() => setProfileOpen(false)}
+        >
+          <section
+            className="profile-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Your ReSync notes and AI settings"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="profile-panel-header">
+              <div>
+                <span className="profile-large">MT</span>
+                <div>
+                  <p className="eyebrow">Your ReSync</p>
+                  <h2>Notes & learning memory</h2>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close profile"
+                onClick={() => setProfileOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+
+            <nav className="profile-tabs" aria-label="Profile sections">
+              {(
+                [
+                  ["notes", "Saved notes"],
+                  ["knowledge", "AI summaries"],
+                  ["scoring", "Scoring & models"],
+                  ["usage", "Usage"],
+                ] as const
+              ).map(([tab, label]) => (
+                <button
+                  type="button"
+                  key={tab}
+                  className={profileTab === tab ? "active" : ""}
+                  aria-current={profileTab === tab ? "page" : undefined}
+                  onClick={() => setProfileTab(tab)}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+
+            {profileTab === "notes" || profileTab === "knowledge" ? (
+              <div className="profile-filter" aria-label="Filter notes by topic">
+                {topics.map((topic) => (
+                  <button
+                    type="button"
+                    key={topic}
+                    className={profileTopic === topic ? "active" : ""}
+                    onClick={() => setProfileTopic(topic)}
+                  >
+                    {topic}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="profile-content">
+              {profileTab === "notes" ? (
+                profileNotes.length ? (
+                  <div className="profile-note-list">
+                    {profileNotes.map((video) => (
+                      <article className="profile-note-card" key={video.id}>
+                        <div className="profile-note-meta">
+                          <span>{video.type}</span>
+                          <time>
+                            {new Date(
+                              noteUpdatedAt[video.id] ?? video.addedAt,
+                            ).toLocaleDateString("en-BD", {
+                              day: "numeric",
+                              month: "short",
+                              year: "numeric",
+                            })}
+                          </time>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProfileOpen(false);
+                            openVideo(video.id);
+                          }}
+                        >
+                          <h3>{video.title}</h3>
+                          <p>{video.channel}</p>
+                        </button>
+                        <MarkdownText
+                          content={notes[video.id]}
+                          className="profile-note-body"
+                        />
+                        <div className="profile-topic-row">
+                          {(video.topics.length ? video.topics : ["Unsorted"]).map(
+                            (topic) => (
+                              <span key={topic}>{topic}</span>
+                            ),
+                          )}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="profile-empty">
+                    <span>✎</span>
+                    <h3>No notes in this topic yet</h3>
+                    <p>Your working notes appear here as soon as you write them.</p>
+                  </div>
+                )
+              ) : null}
+
+              {profileTab === "knowledge" ? (
+                <>
+                  <p className="profile-explainer">
+                    ReSync condenses your own notes into durable learning memory.
+                    Future scores compare new content against this memory, lowering
+                    novelty and other repetition-sensitive factors.
+                  </p>
+                  {profileKnowledge.length ? (
+                    <div className="profile-note-list">
+                      {profileKnowledge.map((video) => {
+                        const learned = knowledgeSummaries[video.id];
+                        return (
+                          <article
+                            className="profile-note-card knowledge-card"
+                            key={video.id}
+                          >
+                            <div className="profile-note-meta">
+                              <span>AI learning summary</span>
+                              <time>
+                                {new Date(learned.updatedAt).toLocaleDateString(
+                                  "en-BD",
+                                  {
+                                    day: "numeric",
+                                    month: "short",
+                                    year: "numeric",
+                                  },
+                                )}
+                              </time>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProfileOpen(false);
+                                openVideo(video.id);
+                              }}
+                            >
+                              <h3>{video.title}</h3>
+                              <p>{video.channel}</p>
+                            </button>
+                            <MarkdownText
+                              content={learned.summary}
+                              className="profile-note-body"
+                            />
+                            <small>Generated with {learned.model}</small>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="profile-empty">
+                      <span>✦</span>
+                      <h3>No AI learning summaries yet</h3>
+                      <p>
+                        Write meaningful working notes; ReSync summarizes them
+                        after they sync.
+                      </p>
+                    </div>
+                  )}
+                </>
+              ) : null}
+
+              {profileTab === "scoring" ? (
+                <div className="profile-settings">
+                  <section>
+                    <p className="eyebrow">Personal value /100</p>
+                    <h3>Scoring criteria</h3>
+                    <p>
+                      The score is the exact sum of these five factors. Your AI
+                      learning memory is supplied as the baseline for every new
+                      analysis.
+                    </p>
+                    <div className="criteria-list">
+                      {[
+                        [
+                          "Novelty",
+                          25,
+                          "New relative to what you have already learned.",
+                        ],
+                        [
+                          "Actionability",
+                          25,
+                          "Specific new actions or decisions it enables.",
+                        ],
+                        [
+                          "Information density",
+                          20,
+                          "Non-redundant value delivered per section.",
+                        ],
+                        [
+                          "Evidence quality",
+                          15,
+                          "How well the source supports important claims.",
+                        ],
+                        [
+                          "Time efficiency",
+                          15,
+                          "Whether its new value justifies your time.",
+                        ],
+                      ].map(([label, max, description]) => (
+                        <div className="criterion" key={label}>
+                          <strong>
+                            {label} <span>/{max}</span>
+                          </strong>
+                          <p>{description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                  <section>
+                    <p className="eyebrow">AI configuration</p>
+                    <h3>Models in use</h3>
+                    <div className="model-list">
+                      <div>
+                        <span>Text, scoring, chat & note summaries</span>
+                        <strong>{models.text}</strong>
+                      </div>
+                      <div>
+                        <span>Uploaded audio/video transcription</span>
+                        <strong>{models.transcription}</strong>
+                        <small>
+                          Only used when you choose Generate transcript. Pasted or
+                          extension-captured text skips transcription.
+                        </small>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              ) : null}
+
+              {profileTab === "usage" ? (
+                <div className="usage-section">
+                  <div className="usage-intro">
+                    <div>
+                      <p className="eyebrow">Per-video accounting</p>
+                      <h3>AI usage recorded by ReSync</h3>
+                    </div>
+                    <p>
+                      Costs use standard API list prices when the model has a
+                      public price. Account-wide free allowances are not
+                      subtracted because an individual API response does not say
+                      whether those credits were applied.
+                    </p>
+                  </div>
+                  {Array.from(usageByItem.entries())
+                    .map(([itemId, usage]) => ({
+                      video: videos.find((entry) => entry.id === itemId),
+                      usage,
+                    }))
+                    .filter(
+                      (
+                        entry,
+                      ): entry is {
+                        video: Video;
+                        usage: ReturnType<typeof usageByItem.get> & {};
+                      } => Boolean(entry.video),
+                    )
+                    .sort(
+                      (a, b) => b.usage.lastUsedAt - a.usage.lastUsedAt,
+                    )
+                    .map(({ video, usage }) => (
+                      <article className="usage-card" key={video.id}>
+                        <div>
+                          <h4>{video.title}</h4>
+                          <span>
+                            {Array.from(usage.models)
+                              .map(compactModelName)
+                              .join(" · ")}
+                          </span>
+                        </div>
+                        <dl>
+                          <div>
+                            <dt>Transcript input</dt>
+                            <dd>{usage.transcriptionInput.toLocaleString()} tokens</dd>
+                          </div>
+                          <div>
+                            <dt>Transcript output</dt>
+                            <dd>{usage.transcriptOutput.toLocaleString()} tokens</dd>
+                          </div>
+                          <div>
+                            <dt>Text AI input</dt>
+                            <dd>{usage.textInput.toLocaleString()} tokens</dd>
+                          </div>
+                          <div>
+                            <dt>Text AI output</dt>
+                            <dd>{usage.textOutput.toLocaleString()} tokens</dd>
+                          </div>
+                          <div>
+                            <dt>Cached input</dt>
+                            <dd>{usage.cachedInput.toLocaleString()} tokens</dd>
+                          </div>
+                          <div>
+                            <dt>Tracked list-price cost</dt>
+                            <dd>
+                              {moneyFromMicros(usage.costMicros)}
+                              {usage.unknownCost ? " + unpriced model usage" : ""}
+                            </dd>
+                          </div>
+                        </dl>
+                      </article>
+                    ))}
+                  {!usageByItem.size ? (
+                    <div className="profile-empty">
+                      <span>◎</span>
+                      <h3>No recorded usage yet</h3>
+                      <p>
+                        New analysis, chat, note-summary, and transcription calls
+                        will appear here.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {selectedVideo ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setSelectedId(null)}>
           <section
@@ -1949,7 +2637,7 @@ export default function Home() {
                             ? "Worth watching"
                             : "Worth reading"}
                     </span>
-                    <p>{selectedAnalysis.summary}</p>
+                    <MarkdownText content={selectedAnalysis.summary} />
                   </div>
                 ) : null}
               </section>
@@ -2006,14 +2694,27 @@ export default function Home() {
                 </div>
                 <textarea
                   value={notes[selectedVideo.id] ?? ""}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const changedAt = Date.now();
                     setNotes((current) => ({
                       ...current,
                       [selectedVideo.id]: event.target.value,
-                    }))
-                  }
+                    }));
+                    setNoteUpdatedAt((current) => ({
+                      ...current,
+                      [selectedVideo.id]: changedAt,
+                    }));
+                  }}
                   placeholder="Key ideas, timestamps, decisions, next actions…"
                 />
+                <div className="knowledge-save-state">
+                  <span aria-hidden="true">✦</span>
+                  {knowledgeBusyIds.has(selectedVideo.id)
+                    ? "Updating your AI learning summary…"
+                    : knowledgeSummaries[selectedVideo.id]
+                      ? "AI learning summary is active in future novelty scores."
+                      : "Write a meaningful note and ReSync will build your learning memory."}
+                </div>
               </section>
 
               <section className="ask-panel">
@@ -2024,10 +2725,10 @@ export default function Home() {
                     notes into actions.
                   </p>
                 </div>
-                <div className="chat-space">
+                <div className="chat-space" ref={chatMessagesRef}>
                   {chatLoading ? (
                     <p>Loading conversation…</p>
-                  ) : chatMessages.length ? (
+                  ) : chatMessages.length || chatBusy ? (
                     <div className="chat-messages">
                       {chatMessages.map((message) => (
                         <div
@@ -2037,7 +2738,7 @@ export default function Home() {
                           <span>
                             {message.role === "user" ? "You" : "ReSync AI"}
                           </span>
-                          <p>{message.content}</p>
+                          <MarkdownText content={message.content} />
                         </div>
                       ))}
                       {chatBusy ? (

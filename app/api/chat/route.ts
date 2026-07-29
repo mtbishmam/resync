@@ -3,7 +3,8 @@ import {
   itemFromRow,
   ItemRow,
 } from "../../../db/library";
-import { ANALYSIS_MODEL } from "../../../lib/transcript-analysis";
+import { usageFromPayload, usageStatement } from "../../../lib/ai-usage";
+import { TEXT_MODEL } from "../../../lib/model-config";
 
 const MAX_MESSAGE_CHARACTERS = 4_000;
 const MAX_SOURCE_CHARACTERS = 600_000;
@@ -169,7 +170,7 @@ export async function POST(request: Request) {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: ANALYSIS_MODEL,
+        model: TEXT_MODEL,
         store: false,
         reasoning: { effort: "low" },
         input: [
@@ -254,11 +255,18 @@ ${sourceText || "No transcript or article text has been captured. Disclose this 
           assistantMessage.content_markdown,
           assistantMessage.created_at,
         ),
+      usageStatement(d1, {
+        itemId: item.id,
+        purpose: "chat",
+        model: TEXT_MODEL,
+        usage: usageFromPayload(payload),
+        createdAt: now,
+      }),
     ]);
 
     return noStoreJson({
       messages: [publicMessage(userMessage), publicMessage(assistantMessage)],
-      model: ANALYSIS_MODEL,
+      model: TEXT_MODEL,
       grounded: Boolean(sourceText),
     });
   } catch {

@@ -8,12 +8,15 @@ import {
   upsertItemStatement,
   upsertNoteStatement,
 } from "../../../db/library";
+import { TEXT_MODEL, TRANSCRIPTION_MODEL } from "../../../lib/model-config";
+import { sha256 } from "../../../lib/transcript-analysis";
 
 const MAX_REQUEST_BYTES = 1_500_000;
 
 type NoteRow = {
   item_id: string;
   body_markdown: string;
+  updated_at: number;
 };
 
 type AnalysisRow = {
@@ -22,6 +25,29 @@ type AnalysisRow = {
   rationale_markdown: string;
   recommendation: string;
   learnable_points_json: string;
+  created_at: number;
+};
+
+type KnowledgeRow = {
+  item_id: string;
+  note_hash: string;
+  summary_markdown: string;
+  topics_json: string;
+  model: string;
+  updated_at: number;
+};
+
+type UsageRow = {
+  id: string;
+  item_id: string;
+  purpose: string;
+  model: string;
+  input_tokens: number;
+  cached_input_tokens: number;
+  audio_input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_cost_micros: number | null;
   created_at: number;
 };
 
@@ -41,10 +67,19 @@ function parseNotes(value: unknown): Record<string, string> | null {
 export async function GET() {
   try {
     const d1 = await ensureNormalizedLibrary();
-    const [itemResults, noteResults, analysisResults, initialized] =
+    const [
+      itemResults,
+      noteResults,
+      analysisResults,
+      knowledgeResults,
+      usageResults,
+      initialized,
+    ] =
       await Promise.all([
       d1.prepare("SELECT * FROM items ORDER BY added_at DESC").all<ItemRow>(),
-      d1.prepare("SELECT item_id, body_markdown FROM notes").all<NoteRow>(),
+      d1
+        .prepare("SELECT item_id, body_markdown, updated_at FROM notes")
+        .all<NoteRow>(),
       d1
         .prepare(
           `SELECT item_id, summary_markdown, rationale_markdown, recommendation,
@@ -52,6 +87,21 @@ export async function GET() {
            FROM ai_analyses ORDER BY created_at DESC`,
         )
         .all<AnalysisRow>(),
+      d1
+        .prepare(
+          `SELECT item_id, note_hash, summary_markdown, topics_json, model,
+                  updated_at
+           FROM learned_summaries ORDER BY updated_at DESC`,
+        )
+        .all<KnowledgeRow>(),
+      d1
+        .prepare(
+          `SELECT id, item_id, purpose, model, input_tokens,
+                  cached_input_tokens, audio_input_tokens, output_tokens,
+                  total_tokens, estimated_cost_micros, created_at
+           FROM ai_usage_events ORDER BY created_at DESC`,
+        )
+        .all<UsageRow>(),
       d1
         .prepare("SELECT value FROM app_meta WHERE key = ?1")
         .bind(NORMALIZED_LIBRARY_KEY)
@@ -77,7 +127,30 @@ export async function GET() {
           note.body_markdown,
         ]),
       ),
+      noteUpdatedAt: Object.fromEntries(
+        (noteResults.results ?? []).map((note) => [
+          note.item_id,
+          note.updated_at,
+        ]),
+      ),
       analyses,
+      knowledge: Object.fromEntries(
+        (knowledgeResults.results ?? []).map((summary) => [
+          summary.item_id,
+          {
+            summary: summary.summary_markdown,
+            noteHash: summary.note_hash,
+            topics: JSON.parse(summary.topics_json) as string[],
+            model: summary.model,
+            updatedAt: summary.updated_at,
+          },
+        ]),
+      ),
+      usageEvents: usageResults.results ?? [],
+      models: {
+        text: TEXT_MODEL,
+        transcription: TRANSCRIPTION_MODEL,
+      },
       updatedAt: Math.max(
         0,
         ...(itemResults.results ?? []).map((item) => item.updated_at),
@@ -159,7 +232,26 @@ export async function PUT(request: Request) {
     );
     await d1.batch(statements);
 
-    return noStoreJson({ saved: true, updatedAt });
+    const knowledgeRows = await d1
+      .prepare(
+        `SELECT n.item_id, n.body_markdown, k.note_hash
+         FROM notes n
+         LEFT JOIN learned_summaries k ON k.item_id = n.item_id
+         WHERE length(trim(n.body_markdown)) >= 12`,
+      )
+      .all<{
+        item_id: string;
+        body_markdown: string;
+        note_hash: string | null;
+      }>();
+    const knowledgeStaleIds: string[] = [];
+    for (const row of knowledgeRows.results ?? []) {
+      if ((await sha256(row.body_markdown.trim())) !== row.note_hash) {
+        knowledgeStaleIds.push(row.item_id);
+      }
+    }
+
+    return noStoreJson({ saved: true, updatedAt, knowledgeStaleIds });
   } catch {
     return noStoreJson(
       { error: "Cloud library is temporarily unavailable." },

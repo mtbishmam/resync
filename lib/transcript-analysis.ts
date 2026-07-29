@@ -1,7 +1,9 @@
 import { itemFromRow } from "../db/library";
+import { usageFromPayload, usageStatement } from "./ai-usage";
+import { SCORING_CRITERIA, TEXT_MODEL } from "./model-config";
 
-export const ANALYSIS_MODEL = "gpt-5.4-mini-2026-03-17";
-export const PROMPT_VERSION = "resync-transcript-v2";
+export const ANALYSIS_MODEL = TEXT_MODEL;
+export const PROMPT_VERSION = "resync-transcript-v3-knowledge-aware";
 export const MAX_TRANSCRIPT_CHARACTERS = 900_000;
 
 const TOPICS = new Set(["AI", "CP", "Tech", "Business"]);
@@ -232,6 +234,7 @@ async function requestAnalysis(
   apiKey: string,
   item: ReturnType<typeof itemFromRow>,
   transcript: string,
+  learnedKnowledge: string,
 ) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -246,14 +249,18 @@ async function requestAnalysis(
       input: [
         {
           role: "system",
-          content:
-            "You analyze saved learning content for ReSync. Classify it using only the supplied transcript and metadata. Topics must be a subset of AI, CP (competitive programming), Tech, and Business. Recommend summary_only when the transcript is repetitive, generic, or contains no meaningful non-obvious lesson. Score value as the exact sum of novelty /25, actionability /25, information density /20, evidence quality /15, and time efficiency /15. Keep the summary concise and factual. Never infer claims that are absent from the transcript.",
+          content: `You analyze saved learning content for ReSync. Classify it using only the supplied transcript and metadata. Topics must be a subset of AI, CP (competitive programming), Tech, and Business. Recommend summary_only when the transcript is repetitive, generic, or contains no meaningful non-obvious lesson.
+
+Score personal value as the exact sum of ${SCORING_CRITERIA.map((criterion) => `${criterion.label.toLowerCase()} /${criterion.max}`).join(", ")}. Treat the supplied prior learned knowledge as the user's existing baseline: repeated ideas must reduce novelty, information density, time efficiency, and any actionability that is not genuinely new. Evidence quality should still reflect the source itself. Keep the summary concise and factual. Never infer claims that are absent from the transcript.`,
         },
         {
           role: "user",
           content: `Title: ${item.title}
 Author: ${item.channel}
 Duration seconds: ${item.durationSeconds ?? 0}
+
+Prior learned knowledge from the user's own notes (exclude this item's notes):
+${learnedKnowledge || "No prior learned knowledge has been summarized yet."}
 
 Transcript:
 ${transcript}`,
@@ -281,7 +288,7 @@ ${transcript}`,
   if (!validAnalysis(parsed)) {
     throw new Error("OpenAI returned an invalid ReSync analysis.");
   }
-  return parsed;
+  return { analysis: parsed, usage: usageFromPayload(payload) };
 }
 
 function factorRows(analysis: Analysis) {
@@ -338,7 +345,28 @@ export async function analyzeAndStoreTranscript({
     throw error;
   }
 
-  const analysis = await requestAnalysis(apiKey, item, cleanTranscript);
+  const knowledgeRows = await d1
+    .prepare(
+      `SELECT summary_markdown
+       FROM learned_summaries
+       WHERE item_id <> ?1
+       ORDER BY updated_at DESC
+       LIMIT 100`,
+    )
+    .bind(item.id)
+    .all<{ summary_markdown: string }>();
+  const learnedKnowledge = (knowledgeRows.results ?? [])
+    .map((row) => row.summary_markdown.trim())
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 50_000);
+  const requested = await requestAnalysis(
+    apiKey,
+    item,
+    cleanTranscript,
+    learnedKnowledge,
+  );
+  const analysis = requested.analysis;
   const factors = factorRows(analysis);
   const analyzedAt = Date.now();
   await d1.batch([
@@ -384,6 +412,13 @@ export async function analyzeAndStoreTranscript({
         PROMPT_VERSION,
         analyzedAt,
       ),
+    usageStatement(d1, {
+      itemId: item.id,
+      purpose: "analysis",
+      model: ANALYSIS_MODEL,
+      usage: requested.usage,
+      createdAt: analyzedAt,
+    }),
     d1
       .prepare(
         `UPDATE items SET

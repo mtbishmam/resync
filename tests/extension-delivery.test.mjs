@@ -12,6 +12,7 @@ async function loadBackground() {
   const notifications = [];
   const alarms = [];
   let messageListener;
+  let tabUpdatedListener;
 
   const storage = {
     async get(keys) {
@@ -77,6 +78,11 @@ async function loadBackground() {
       async remove(tabId) {
         removedTabs.push(tabId);
       },
+      onUpdated: {
+        addListener(listener) {
+          tabUpdatedListener = listener;
+        },
+      },
     },
   };
 
@@ -127,6 +133,9 @@ async function loadBackground() {
     removedTabs,
     sendMessage,
     state,
+    updateTab(tabId, changeInfo) {
+      tabUpdatedListener(tabId, changeInfo);
+    },
   };
 }
 
@@ -134,6 +143,7 @@ test("rapid captures remain separate and acknowledgements remove only their matc
   const background = await loadBackground();
   const firstRequest = background.sendMessage({
     type: "resync-enqueue-capture",
+    sourceTabId: 301,
     capture: {
       url: "https://www.youtube.com/watch?v=first",
       title: "First",
@@ -142,6 +152,7 @@ test("rapid captures remain separate and acknowledgements remove only their matc
   });
   const secondRequest = background.sendMessage({
     type: "resync-enqueue-capture",
+    sourceTabId: 302,
     capture: {
       url: "https://www.youtube.com/watch?v=second",
       title: "Second",
@@ -153,6 +164,8 @@ test("rapid captures remain separate and acknowledgements remove only their matc
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
   assert.notEqual(first.captureId, second.captureId);
+  assert.equal(background.state.pendingCaptures[0].sourceTabId, 301);
+  assert.equal(background.state.pendingCaptures[1].sourceTabId, 302);
   assert.deepEqual(
     background.state.pendingCaptures.map((capture) => capture.captureId),
     [first.captureId, second.captureId],
@@ -166,7 +179,7 @@ test("rapid captures remain separate and acknowledgements remove only their matc
       ok: true,
       message: "Saved.",
     },
-    { tab: { id: 31 } },
+    { tab: { id: 1 } },
   );
   await background.flushQueue();
 
@@ -174,7 +187,7 @@ test("rapid captures remain separate and acknowledgements remove only their matc
     background.state.pendingCaptures.map((capture) => capture.captureId),
     [second.captureId],
   );
-  assert.deepEqual(background.removedTabs, [31]);
+  assert.deepEqual(background.removedTabs, [1]);
   assert.equal(background.state.captureFeedback.captureId, first.captureId);
   assert.equal(background.state.captureFeedback.ok, true);
   assert.equal(background.notifications.length, 1);
@@ -185,7 +198,16 @@ test("rapid captures remain separate and acknowledgements remove only their matc
   );
   assert.deepEqual(background.badgeUpdates.at(-1), {
     type: "text",
-    text: "…",
+    text: "✓",
+    tabId: 301,
+  });
+
+  background.updateTab(301, { status: "loading" });
+  await background.flushQueue();
+  assert.deepEqual(background.badgeUpdates.at(-1), {
+    type: "text",
+    text: "",
+    tabId: 301,
   });
 });
 
@@ -193,6 +215,7 @@ test("a failed acknowledgement keeps its capture queued for retry", async () => 
   const background = await loadBackground();
   const capture = await background.sendMessage({
     type: "resync-enqueue-capture",
+    sourceTabId: 401,
     capture: {
       url: "https://example.com/article",
       title: "Article",
@@ -207,7 +230,7 @@ test("a failed acknowledgement keeps its capture queued for retry", async () => 
       ok: false,
       message: "No confirmation.",
     },
-    { tab: { id: 44 } },
+    { tab: { id: 1 } },
   );
   await background.flushQueue();
 
@@ -225,8 +248,11 @@ test("a failed acknowledgement keeps its capture queued for retry", async () => 
   );
   assert.ok(
     background.badgeUpdates.some(
-      (update) => update.type === "text" && update.text === "!",
+      (update) =>
+        update.type === "text" &&
+        update.text === "!" &&
+        update.tabId === 401,
     ),
   );
-  assert.deepEqual(background.removedTabs, [44]);
+  assert.deepEqual(background.removedTabs, [1]);
 });

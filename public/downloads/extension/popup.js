@@ -2,9 +2,11 @@ const statusElement = document.querySelector("#status");
 const captureButton = document.querySelector("#capture");
 const manualTranscript = document.querySelector("#manualTranscript");
 const sendManualButton = document.querySelector("#sendManual");
+const RESYNC_HOST = "resync.mtbishmam.chatgpt.site";
 
 let lastCapture = null;
 let activeCaptureId = null;
+let sourceTabId = null;
 
 function isYouTube(url) {
   try {
@@ -14,6 +16,14 @@ function isYouTube(url) {
       hostname === "youtube.com" ||
       hostname.endsWith(".youtube.com")
     );
+  } catch {
+    return false;
+  }
+}
+
+function isReSync(url) {
+  try {
+    return new URL(url).hostname.toLowerCase() === RESYNC_HOST;
   } catch {
     return false;
   }
@@ -152,6 +162,7 @@ async function sendToReSync(capture) {
   const result = await chrome.runtime.sendMessage({
     type: "resync-enqueue-capture",
     capture,
+    sourceTabId,
   });
   if (!result?.ok || !result.captureId) {
     throw new Error(result?.error || "ReSync could not queue this capture.");
@@ -170,6 +181,12 @@ async function capture() {
     if (!tab?.id || !tab.url?.startsWith("http")) {
       throw new Error("Open a YouTube video or article first.");
     }
+    sourceTabId = tab.id;
+    if (isReSync(tab.url)) {
+      throw new Error(
+        "ReSync is already open. Capture a YouTube video or article tab instead.",
+      );
+    }
     let result;
     try {
       [result] = await chrome.scripting.executeScript({
@@ -180,7 +197,7 @@ async function capture() {
       const message = error instanceof Error ? error.message : String(error);
       if (/cannot access|permission|host/i.test(message)) {
         throw new Error(
-          "ReSync needs access to YouTube. Reload version 0.2.2 and allow its YouTube permission.",
+          "ReSync needs access to YouTube. Reload version 0.3.0 and allow its YouTube permission.",
         );
       }
       throw error;

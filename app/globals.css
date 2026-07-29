@@ -89,17 +89,11 @@ button {
 }
 
 .brand-mark {
-  display: grid;
+  display: block;
   width: 31px;
   height: 31px;
-  place-items: center;
-  border-radius: 9px 9px 9px 3px;
-  background: var(--red);
-  color: white;
-  font-family: Georgia, serif;
-  font-size: 19px;
-  font-style: italic;
-  box-shadow: 0 7px 18px rgba(229, 72, 63, 0.22);
+  flex: 0 0 31px;
+  background: url("/resync-icon.svg") center / contain no-repeat;
 }
 
 .primary-nav {

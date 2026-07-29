@@ -32,6 +32,10 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase: base,
     title,
     description,
+    icons: {
+      icon: [{ url: "/resync-icon.svg", type: "image/svg+xml" }],
+      shortcut: "/resync-icon.svg",
+    },
     openGraph: {
       title,
       description,

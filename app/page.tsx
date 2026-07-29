@@ -132,6 +132,7 @@ const NOTES_KEY = "resync-replay-notes";
 const SIDEBAR_WIDTH_KEY = "resync-sidebar-width";
 const CLOUD_SYNCED_KEY = "resync-cloud-synced";
 const CLOUD_DIRTY_KEY = "resync-cloud-dirty";
+const CAPTURE_BROADCAST_CHANNEL = "resync-capture-results";
 // Five minutes keeps the cooldown easy to test. The final ReSync release uses 24 hours.
 const COOLDOWN_MINUTES = 5;
 const topicOptions: Topic[] = ["AI", "CP", "Tech", "Business"];
@@ -616,6 +617,32 @@ export default function Home() {
   }, [notes, ready]);
 
   useEffect(() => {
+    if (!("BroadcastChannel" in window)) return;
+    const channel = new BroadcastChannel(CAPTURE_BROADCAST_CHANNEL);
+    channel.addEventListener("message", (event) => {
+      if (event.data?.type !== "resync-item-captured" || !event.data.item) {
+        return;
+      }
+      const capturedItem = normalizeVideo(event.data.item as Partial<Video>);
+      setVideos((current) => {
+        const exists = current.some((video) => video.id === capturedItem.id);
+        return exists
+          ? current.map((video) =>
+              video.id === capturedItem.id ? capturedItem : video,
+            )
+          : [capturedItem, ...current];
+      });
+      if (document.visibilityState === "visible") {
+        setActiveType(capturedItem.type);
+        setActiveStatus("inbox");
+        setNotice(event.data.message ?? "Captured in ReSync.");
+        setNoticeTone("success");
+      }
+    });
+    return () => channel.close();
+  }, []);
+
+  useEffect(() => {
     if (!ready || cloudSyncStarted.current) return;
     cloudSyncStarted.current = true;
     const controller = new AbortController();
@@ -865,6 +892,15 @@ export default function Home() {
             }
           }
           extensionCaptureStarted.current.delete(captureKey);
+          if ("BroadcastChannel" in window) {
+            const channel = new BroadcastChannel(CAPTURE_BROADCAST_CHANNEL);
+            channel.postMessage({
+              type: "resync-item-captured",
+              item: capturedItem,
+              message: acknowledgement.message,
+            });
+            channel.close();
+          }
           window.postMessage(
             {
               type: "resync-extension-ack",
@@ -1655,7 +1691,7 @@ export default function Home() {
     >
       <aside className="sidebar">
         <a className="brand" href="#" aria-label="ReSync home">
-          <span className="brand-mark">R</span>
+          <span className="brand-mark" aria-hidden="true" />
           <span>ReSync</span>
         </a>
 

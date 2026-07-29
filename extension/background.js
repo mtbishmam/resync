@@ -9,11 +9,17 @@ function withQueueLock(operation) {
   return nextOperation;
 }
 
-async function setBadge(text, color, title = "Capture in ReSync") {
-  await chrome.action.setBadgeBackgroundColor({ color });
-  await chrome.action.setBadgeText({ text });
+async function setBadge(
+  text,
+  color,
+  title = "Capture in ReSync",
+  tabId = undefined,
+) {
+  const tabDetails = Number.isInteger(tabId) ? { tabId } : {};
+  await chrome.action.setBadgeBackgroundColor({ color, ...tabDetails });
+  await chrome.action.setBadgeText({ text, ...tabDetails });
   if (chrome.action.setTitle) {
-    await chrome.action.setTitle({ title });
+    await chrome.action.setTitle({ title, ...tabDetails });
   }
 }
 
@@ -75,13 +81,26 @@ async function openDeliveryTab(captureId) {
     lastAttemptAt: Date.now(),
   };
   await writeQueue(queue);
-  await chrome.tabs.create({
+  const deliveryTab = await chrome.tabs.create({
     url: `${RESYNC_URL}/?capture=extension&captureId=${encodeURIComponent(captureId)}`,
     active: false,
   });
+  if (deliveryTab?.id) {
+    const refreshedQueue = await readQueue();
+    const refreshedIndex = refreshedQueue.findIndex(
+      (capture) => capture.captureId === captureId,
+    );
+    if (refreshedIndex >= 0) {
+      refreshedQueue[refreshedIndex] = {
+        ...refreshedQueue[refreshedIndex],
+        deliveryTabId: deliveryTab.id,
+      };
+      await writeQueue(refreshedQueue);
+    }
+  }
 }
 
-async function enqueueCapture(capture) {
+async function enqueueCapture(capture, sourceTabId) {
   if (!capture || typeof capture.url !== "string") {
     throw new Error("The page capture is invalid.");
   }
@@ -90,13 +109,19 @@ async function enqueueCapture(capture) {
     captureId: crypto.randomUUID(),
     capturedAt: Date.now(),
     attempts: 0,
+    sourceTabId: Number.isInteger(sourceTabId) ? sourceTabId : undefined,
   };
   const queue = await readQueue();
   queue.push(pendingCapture);
   await writeQueue(queue);
   await syncRetryAlarm(queue);
   await chrome.storage.local.remove("captureFeedback");
-  await setBadge("…", "#555555", "ReSync: sending capture…");
+  await setBadge(
+    "…",
+    "#555555",
+    "ReSync: sending capture…",
+    pendingCapture.sourceTabId,
+  );
 
   // Retry older unsent captures whenever the user makes a new capture. Each
   // payload keeps its own ID, so completing one can never erase another.
@@ -114,6 +139,9 @@ async function enqueueCapture(capture) {
 
 async function finishCapture(message, sender) {
   const queue = await readQueue();
+  const completedCapture = queue.find(
+    (capture) => capture.captureId === message.captureId,
+  );
   const remaining = message.ok
     ? queue.filter((capture) => capture.captureId !== message.captureId)
     : queue;
@@ -129,22 +157,35 @@ async function finishCapture(message, sender) {
   };
   await chrome.storage.local.set({ captureFeedback: feedback });
   if (!feedback.ok) {
-    await setBadge("!", "#c62828", `ReSync: ${feedback.message}`);
-  } else if (remaining.length > 0) {
-    await setBadge("…", "#555555", "ReSync: saved; more captures are sending…");
+    await setBadge(
+      "!",
+      "#c62828",
+      `ReSync: ${feedback.message}`,
+      completedCapture?.sourceTabId,
+    );
   } else {
-    await setBadge("✓", "#16803c", "ReSync: saved to Inbox");
+    await setBadge(
+      "✓",
+      "#16803c",
+      "ReSync: saved to Inbox",
+      completedCapture?.sourceTabId,
+    );
   }
   await showFeedbackNotification(feedback).catch(() => {});
 
-  if (sender.tab?.id) {
-    await chrome.tabs.remove(sender.tab.id).catch(() => {});
+  const deliveryTabIds = new Set(
+    [sender.tab?.id, completedCapture?.deliveryTabId].filter(Number.isInteger),
+  );
+  for (const tabId of deliveryTabIds) {
+    await chrome.tabs.remove(tabId).catch(() => {});
   }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "resync-enqueue-capture") {
-    void withQueueLock(() => enqueueCapture(message.capture))
+    void withQueueLock(() =>
+      enqueueCapture(message.capture, message.sourceTabId),
+    )
       .then((capture) =>
         sendResponse({ ok: true, captureId: capture.captureId }),
       )
@@ -159,7 +200,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "resync-capture-started") {
     void chrome.storage.local.remove("captureFeedback");
-    void setBadge("…", "#555555", "ReSync: sending capture…");
+    void setBadge(
+      "…",
+      "#555555",
+      "ReSync: sending capture…",
+      message.sourceTabId,
+    );
     return;
   }
 
@@ -190,7 +236,10 @@ async function resumePendingCaptures() {
 }
 
 chrome.runtime.onInstalled.addListener(() =>
-  void withQueueLock(resumePendingCaptures),
+  void Promise.all([
+    chrome.action.setBadgeText({ text: "" }),
+    withQueueLock(resumePendingCaptures),
+  ]),
 );
 chrome.runtime.onStartup.addListener(() =>
   void withQueueLock(resumePendingCaptures),
@@ -198,5 +247,10 @@ chrome.runtime.onStartup.addListener(() =>
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === RETRY_ALARM) {
     void withQueueLock(resumePendingCaptures);
+  }
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url || changeInfo.status === "loading") {
+    void setBadge("", "#555555", "Capture in ReSync", tabId);
   }
 });

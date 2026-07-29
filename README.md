@@ -1,11 +1,13 @@
-# Later
+# ReSync — RePlay
 
-A fast personal YouTube watch-later library.
+A fast, intentional YouTube watch-later library inside ReSync.
 
 The current version is a frontend-first prototype. It supports instant link
-capture, duplicate prevention, status and topic filters, search, sorting, and
-device-local persistence. Cloud sync, YouTube metadata enrichment, and the
-relational backend are intentionally deferred to the next phase.
+capture, YouTube title/channel/thumbnail enrichment, a 20-minute watch cooldown,
+duplicate prevention, removal with undo, a focused 70/30 player and notes
+workspace, status and topic filters, search, sorting, and device-local
+persistence. Cloud sync, complete YouTube metadata, transcripts, and AI analysis
+are intentionally deferred to the backend phase.
 
 ## Run locally
 

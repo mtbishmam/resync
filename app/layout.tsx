@@ -24,9 +24,9 @@ export async function generateMetadata(): Promise<Metadata> {
     (host.startsWith("localhost") ? "http" : "https");
   const base = new URL(`${protocol}://${host}`);
   const image = new URL("/og.png", base).toString();
-  const title = "Later — Personal YouTube Library";
+  const title = "RePlay — Intentional video library by ReSync";
   const description =
-    "A fast, focused watch-later library that ranks videos for usefulness.";
+    "Save the urge, let it cool down, then watch and think with intention.";
 
   return {
     metadataBase: base,
@@ -36,7 +36,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: "website",
-      images: [{ url: image, width: 1656, height: 947, alt: "Later watch-later library" }],
+      images: [{ url: image, width: 1658, height: 949, alt: "ReSync RePlay video library" }],
     },
     twitter: {
       card: "summary_large_image",

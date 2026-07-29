@@ -1,7 +1,15 @@
 async function deliverPendingCapture() {
-  const { pendingCapture } = await chrome.storage.local.get("pendingCapture");
+  const captureId = new URL(location.href).searchParams.get("captureId");
+  const { pendingCaptures, pendingCapture: legacyCapture } =
+    await chrome.storage.local.get(["pendingCaptures", "pendingCapture"]);
+  const queue = Array.isArray(pendingCaptures) ? pendingCaptures : [];
+  const pendingCapture =
+    queue.find((capture) => capture.captureId === captureId) ??
+    (legacyCapture?.captureId === captureId ? legacyCapture : null) ??
+    (!captureId ? queue[0] ?? legacyCapture : null);
   if (!pendingCapture) return;
 
+  let finished = false;
   const onAck = async (event) => {
     if (
       event.source !== window ||
@@ -10,12 +18,10 @@ async function deliverPendingCapture() {
     ) {
       return;
     }
+    finished = true;
     window.removeEventListener("message", onAck);
     window.clearInterval(retryTimer);
     window.clearTimeout(retryTimeout);
-    if (event.data.ok) {
-      await chrome.storage.local.remove("pendingCapture");
-    }
     await chrome.runtime.sendMessage({
       type: "resync-capture-result",
       captureId: pendingCapture.captureId,
@@ -36,6 +42,7 @@ async function deliverPendingCapture() {
   postCapture();
   const retryTimer = window.setInterval(postCapture, 1000);
   const retryTimeout = window.setTimeout(() => {
+    if (finished) return;
     window.clearInterval(retryTimer);
     window.removeEventListener("message", onAck);
     void chrome.runtime.sendMessage({
@@ -44,7 +51,7 @@ async function deliverPendingCapture() {
       ok: false,
       message: "ReSync did not confirm the save. Try again.",
     });
-  }, 30000);
+  }, 60000);
 }
 
 void deliverPendingCapture();

@@ -579,6 +579,9 @@ export default function Home() {
   const cloudSyncStarted = useRef(false);
   const analysisStarted = useRef(new Set<string>());
   const extensionCaptureStarted = useRef(new Set<string>());
+  const extensionCaptureResults = useRef(
+    new Map<string, { ok: true; message: string }>(),
+  );
   const knowledgeStarted = useRef(new Set<string>());
   const knowledgeQueued = useRef(new Set<string>());
   const transcriptFileInput = useRef<HTMLInputElement>(null);
@@ -804,7 +807,20 @@ export default function Home() {
       }
       const capture = event.data.payload as ExtensionCapture;
       const captureKey = capture.captureId ?? capture.url ?? "";
-      if (!captureKey || extensionCaptureStarted.current.has(captureKey)) return;
+      if (!captureKey) return;
+      const previousResult = extensionCaptureResults.current.get(captureKey);
+      if (previousResult) {
+        window.postMessage(
+          {
+            type: "resync-extension-ack",
+            captureId: capture.captureId,
+            ...previousResult,
+          },
+          "*",
+        );
+        return;
+      }
+      if (extensionCaptureStarted.current.has(captureKey)) return;
       extensionCaptureStarted.current.add(captureKey);
       void fetch("/api/capture", {
         method: "POST",
@@ -837,12 +853,23 @@ export default function Home() {
           if (capturedItem.type === "Watch") {
             void enrichMetadata(capturedItem.id, capturedItem.url, true);
           }
+          const acknowledgement = {
+            ok: true as const,
+            message: result.message ?? "Saved to ReSync Inbox.",
+          };
+          extensionCaptureResults.current.set(captureKey, acknowledgement);
+          if (extensionCaptureResults.current.size > 200) {
+            const oldest = extensionCaptureResults.current.keys().next().value;
+            if (typeof oldest === "string") {
+              extensionCaptureResults.current.delete(oldest);
+            }
+          }
+          extensionCaptureStarted.current.delete(captureKey);
           window.postMessage(
             {
               type: "resync-extension-ack",
               captureId: capture.captureId,
-              ok: true,
-              message: result.message ?? "Saved to ReSync Inbox.",
+              ...acknowledgement,
             },
             "*",
           );

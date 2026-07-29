@@ -1,5 +1,3 @@
-const RESYNC_URL = "https://resync.mtbishmam.chatgpt.site";
-
 const statusElement = document.querySelector("#status");
 const captureButton = document.querySelector("#capture");
 const manualTranscript = document.querySelector("#manualTranscript");
@@ -125,23 +123,16 @@ async function captureVisiblePage() {
 }
 
 async function sendToReSync(capture) {
-  const pendingCapture = {
-    ...capture,
-    captureId: crypto.randomUUID(),
-    capturedAt: Date.now(),
-  };
-  activeCaptureId = pendingCapture.captureId;
-  await chrome.storage.local.set({ pendingCapture });
-  await chrome.runtime.sendMessage({
-    type: "resync-capture-started",
-    captureId: pendingCapture.captureId,
+  const result = await chrome.runtime.sendMessage({
+    type: "resync-enqueue-capture",
+    capture,
   });
-  await chrome.tabs.create({
-    url: `${RESYNC_URL}/?capture=extension`,
-    active: false,
-  });
+  if (!result?.ok || !result.captureId) {
+    throw new Error(result?.error || "ReSync could not queue this capture.");
+  }
+  activeCaptureId = result.captureId;
   statusElement.textContent =
-    "Sending in the background… Watch the ReSync badge.";
+    "Queued safely. Sending in the background…";
 }
 
 async function capture() {
@@ -163,7 +154,7 @@ async function capture() {
       const message = error instanceof Error ? error.message : String(error);
       if (/cannot access|permission|host/i.test(message)) {
         throw new Error(
-          "ReSync needs access to YouTube. Reload version 0.2.0 and allow its YouTube permission.",
+          "ReSync needs access to YouTube. Reload version 0.2.1 and allow its YouTube permission.",
         );
       }
       throw error;

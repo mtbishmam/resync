@@ -1,6 +1,4 @@
-// Switch this to the new slug only after that Sites project is live and verified.
-const RESYNC_URL =
-  "https://later-youtube-library.mtbishmam.chatgpt.site";
+const RESYNC_URL = "https://resync.mtbishmam.chatgpt.site";
 
 const statusElement = document.querySelector("#status");
 const captureButton = document.querySelector("#capture");

@@ -341,55 +341,108 @@ function MarkdownText({
   content: string;
   className?: string;
 }) {
-  const blocks = content.trim().split(/\n{2,}/).filter(Boolean);
+  const lines = content.trim().replace(/\r\n/g, "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let index = 0;
+  let blockIndex = 0;
+
+  const startsBlock = (line: string) =>
+    !line.trim() ||
+    /^```/.test(line) ||
+    /^#{1,4}\s+/.test(line) ||
+    /^[-*]\s+/.test(line) ||
+    /^\d+\.\s+/.test(line);
+
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    if (/^```/.test(line)) {
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^```/.test(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      blocks.push(
+        <pre key={blockIndex}>
+          <code>{codeLines.join("\n")}</code>
+        </pre>,
+      );
+      blockIndex += 1;
+      continue;
+    }
+
+    const heading = line.match(/^#{1,4}\s+(.+)$/);
+    if (heading) {
+      blocks.push(
+        <h4 key={blockIndex}>{renderInlineMarkdown(heading[1])}</h4>,
+      );
+      blockIndex += 1;
+      index += 1;
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length && /^[-*]\s+/.test(lines[index])) {
+        items.push(lines[index].replace(/^[-*]\s+/, ""));
+        index += 1;
+      }
+      blocks.push(
+        <ul key={blockIndex}>
+          {items.map((item, itemIndex) => (
+            <li key={itemIndex}>{renderInlineMarkdown(item)}</li>
+          ))}
+        </ul>,
+      );
+      blockIndex += 1;
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      const items: string[] = [];
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index])) {
+        items.push(lines[index].replace(/^\d+\.\s+/, ""));
+        index += 1;
+      }
+      blocks.push(
+        <ol key={blockIndex}>
+          {items.map((item, itemIndex) => (
+            <li key={itemIndex}>{renderInlineMarkdown(item)}</li>
+          ))}
+        </ol>,
+      );
+      blockIndex += 1;
+      continue;
+    }
+
+    const paragraphLines = [line];
+    index += 1;
+    while (index < lines.length && !startsBlock(lines[index])) {
+      paragraphLines.push(lines[index]);
+      index += 1;
+    }
+    blocks.push(
+      <p key={blockIndex}>
+        {paragraphLines.map((paragraphLine, lineIndex) => (
+          <span key={lineIndex}>
+            {renderInlineMarkdown(paragraphLine)}
+            {lineIndex < paragraphLines.length - 1 ? <br /> : null}
+          </span>
+        ))}
+      </p>,
+    );
+    blockIndex += 1;
+  }
+
   return (
     <div className={className ? `markdown ${className}` : "markdown"}>
-      {blocks.map((block, index) => {
-        const lines = block.split("\n");
-        if (lines.every((line) => /^[-*]\s+/.test(line))) {
-          return (
-            <ul key={index}>
-              {lines.map((line, lineIndex) => (
-                <li key={lineIndex}>
-                  {renderInlineMarkdown(line.replace(/^[-*]\s+/, ""))}
-                </li>
-              ))}
-            </ul>
-          );
-        }
-        if (lines.every((line) => /^\d+\.\s+/.test(line))) {
-          return (
-            <ol key={index}>
-              {lines.map((line, lineIndex) => (
-                <li key={lineIndex}>
-                  {renderInlineMarkdown(line.replace(/^\d+\.\s+/, ""))}
-                </li>
-              ))}
-            </ol>
-          );
-        }
-        if (/^```[\s\S]*```$/.test(block)) {
-          return (
-            <pre key={index}>
-              <code>{block.replace(/^```[^\n]*\n?/, "").replace(/```$/, "")}</code>
-            </pre>
-          );
-        }
-        const heading = block.match(/^(#{1,4})\s+(.+)$/);
-        if (heading) {
-          return <h4 key={index}>{renderInlineMarkdown(heading[2])}</h4>;
-        }
-        return (
-          <p key={index}>
-            {lines.map((line, lineIndex) => (
-              <span key={lineIndex}>
-                {renderInlineMarkdown(line)}
-                {lineIndex < lines.length - 1 ? <br /> : null}
-              </span>
-            ))}
-          </p>
-        );
-      })}
+      {blocks}
     </div>
   );
 }
@@ -2627,108 +2680,6 @@ export default function Home() {
             </div>
 
             <aside className="ai-column">
-              <section className="notes-panel">
-                <div className="section-title">
-                  <h3>Working notes</h3>
-                  <span>{cloudStatus === "synced" ? "cloud synced" : "saved locally"}</span>
-                </div>
-                <textarea
-                  value={notes[selectedVideo.id] ?? ""}
-                  onChange={(event) => {
-                    const changedAt = Date.now();
-                    setNotes((current) => ({
-                      ...current,
-                      [selectedVideo.id]: event.target.value,
-                    }));
-                    setNoteUpdatedAt((current) => ({
-                      ...current,
-                      [selectedVideo.id]: changedAt,
-                    }));
-                  }}
-                  placeholder="Key ideas, timestamps, decisions, next actions…"
-                />
-                <div className="knowledge-save-state">
-                  <span aria-hidden="true">✦</span>
-                  {knowledgeBusyIds.has(selectedVideo.id)
-                    ? "Updating your AI learning summary…"
-                    : knowledgeSummaries[selectedVideo.id]
-                      ? "AI learning summary is active in future novelty scores."
-                      : "Write a meaningful note and ReSync will build your learning memory."}
-                </div>
-              </section>
-
-              <section className="ask-panel">
-                <div className="ask-preview">
-                  <span>✦</span>
-                  <p>
-                    Ask for the highest-value ideas, challenge a claim, or turn your
-                    notes into actions.
-                  </p>
-                </div>
-                <div className="chat-space" ref={chatMessagesRef}>
-                  {chatLoading ? (
-                    <p>Loading conversation…</p>
-                  ) : chatMessages.length || chatBusy ? (
-                    <div className="chat-messages">
-                      {chatMessages.map((message) => (
-                        <div
-                          className={`chat-message ${message.role}`}
-                          key={message.id}
-                        >
-                          <span>
-                            {message.role === "user" ? "You" : "ReSync AI"}
-                          </span>
-                          <MarkdownText content={message.content} />
-                        </div>
-                      ))}
-                      {chatBusy ? (
-                        <div className="chat-message assistant pending">
-                          <span>ReSync AI</span>
-                          <p>Thinking…</p>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p>
-                      Ask about this{" "}
-                      {selectedVideo.type === "Watch" ? "video" : "article"}.
-                      ReSync uses the captured source and your notes when
-                      available.
-                    </p>
-                  )}
-                </div>
-                <form
-                  className="ask-input"
-                  onSubmit={(event) => void sendChat(event, selectedVideo.id)}
-                >
-                  <input
-                    aria-label="Ask ReSync AI"
-                    placeholder={
-                      chatBusy
-                        ? "Type your next question while ReSync AI thinks…"
-                        : `Ask about this ${
-                            selectedVideo.type === "Watch" ? "video" : "article"
-                          }…`
-                    }
-                    value={chatInput}
-                    onChange={(event) => setChatInput(event.target.value)}
-                  />
-                  <button
-                    aria-label={
-                      chatBusy
-                        ? "Wait for the current answer before sending"
-                        : "Send message"
-                    }
-                    disabled={chatBusy || !chatInput.trim()}
-                  >
-                    ↑
-                  </button>
-                </form>
-                <p>
-                  Conversations are saved in D1 separately from working notes.
-                </p>
-              </section>
-
               <section className="score-panel">
                 <div className="score-heading">
                   <div>
@@ -2897,6 +2848,108 @@ export default function Home() {
                     : cloudStatus === "syncing"
                       ? "Saving properties…"
                       : "Saved locally; cloud sync will retry"}
+                </p>
+              </section>
+
+              <section className="notes-panel">
+                <div className="section-title">
+                  <h3>Working notes</h3>
+                  <span>{cloudStatus === "synced" ? "cloud synced" : "saved locally"}</span>
+                </div>
+                <textarea
+                  value={notes[selectedVideo.id] ?? ""}
+                  onChange={(event) => {
+                    const changedAt = Date.now();
+                    setNotes((current) => ({
+                      ...current,
+                      [selectedVideo.id]: event.target.value,
+                    }));
+                    setNoteUpdatedAt((current) => ({
+                      ...current,
+                      [selectedVideo.id]: changedAt,
+                    }));
+                  }}
+                  placeholder="Key ideas, timestamps, decisions, next actions…"
+                />
+                <div className="knowledge-save-state">
+                  <span aria-hidden="true">✦</span>
+                  {knowledgeBusyIds.has(selectedVideo.id)
+                    ? "Updating your AI learning summary…"
+                    : knowledgeSummaries[selectedVideo.id]
+                      ? "AI learning summary is active in future novelty scores."
+                      : "Write a meaningful note and ReSync will build your learning memory."}
+                </div>
+              </section>
+
+              <section className="ask-panel">
+                <div className="ask-preview">
+                  <span>✦</span>
+                  <p>
+                    Ask for the highest-value ideas, challenge a claim, or turn your
+                    notes into actions.
+                  </p>
+                </div>
+                <div className="chat-space" ref={chatMessagesRef}>
+                  {chatLoading ? (
+                    <p>Loading conversation…</p>
+                  ) : chatMessages.length || chatBusy ? (
+                    <div className="chat-messages">
+                      {chatMessages.map((message) => (
+                        <div
+                          className={`chat-message ${message.role}`}
+                          key={message.id}
+                        >
+                          <span>
+                            {message.role === "user" ? "You" : "ReSync AI"}
+                          </span>
+                          <MarkdownText content={message.content} />
+                        </div>
+                      ))}
+                      {chatBusy ? (
+                        <div className="chat-message assistant pending">
+                          <span>ReSync AI</span>
+                          <p>Thinking…</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p>
+                      Ask about this{" "}
+                      {selectedVideo.type === "Watch" ? "video" : "article"}.
+                      ReSync uses the captured source and your notes when
+                      available.
+                    </p>
+                  )}
+                </div>
+                <form
+                  className="ask-input"
+                  onSubmit={(event) => void sendChat(event, selectedVideo.id)}
+                >
+                  <input
+                    aria-label="Ask ReSync AI"
+                    placeholder={
+                      chatBusy
+                        ? "Type your next question while ReSync AI thinks…"
+                        : `Ask about this ${
+                            selectedVideo.type === "Watch" ? "video" : "article"
+                          }…`
+                    }
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                  />
+                  <button
+                    aria-label={
+                      chatBusy
+                        ? "Wait for the current answer before sending"
+                        : "Send message"
+                    }
+                    disabled={chatBusy || !chatInput.trim()}
+                  >
+                    ↑
+                  </button>
+                </form>
+                <p>
+                  Conversations are saved in D1 separately from working notes.
                 </p>
               </section>
 

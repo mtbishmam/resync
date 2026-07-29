@@ -13,6 +13,8 @@ type Status = "feed" | "inbox" | "queued" | "watched";
 type ContentType = "Watch" | "Read";
 type Topic = "AI" | "CP" | "Tech" | "Business";
 type CloudStatus = "connecting" | "syncing" | "synced" | "offline";
+type TranscriptStatus = "pending" | "available" | "unavailable" | "error";
+type AnalysisStatus = "pending" | "complete" | "unavailable" | "error";
 type ValueFactor = {
   label: string;
   points: number;
@@ -28,6 +30,8 @@ type Video = {
   tags?: string[];
   captionAvailable?: boolean | null;
   metadataComplete?: boolean;
+  transcriptStatus?: TranscriptStatus;
+  analysisStatus?: AnalysisStatus;
   url: string;
   title: string;
   channel: string;
@@ -194,6 +198,11 @@ function getWebUrl(value: string) {
   }
 }
 
+function isYouTubeUrl(url: URL) {
+  const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+  return hostname === "youtu.be" || hostname === "youtube.com" || hostname.endsWith(".youtube.com");
+}
+
 function articleDetails(url: URL) {
   const hostname = url.hostname.replace(/^www\./, "");
   const slug = url.pathname
@@ -258,6 +267,8 @@ function normalizeVideo(video: Partial<Video> & { topic?: string }): Video {
     tags: video.tags,
     captionAvailable: video.captionAvailable,
     metadataComplete: video.metadataComplete,
+    transcriptStatus: video.transcriptStatus ?? "pending",
+    analysisStatus: video.analysisStatus ?? "pending",
     url: video.url ?? "",
     title: video.title ?? "Saved YouTube video",
     channel: video.channel ?? "Metadata unavailable",
@@ -352,6 +363,7 @@ export default function Home() {
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>("connecting");
   const metadataRefreshStarted = useRef(false);
   const cloudSyncStarted = useRef(false);
+  const analysisStarted = useRef(new Set<string>());
 
   useEffect(() => {
     window.queueMicrotask(() => {
@@ -447,6 +459,15 @@ export default function Home() {
         .then(() => {
           window.localStorage.removeItem(CLOUD_DIRTY_KEY);
           setCloudStatus("synced");
+          videos
+            .filter(
+              (video) =>
+                video.type === "Watch" &&
+                Boolean(video.youtubeId) &&
+                video.metadataComplete &&
+                (video.analysisStatus ?? "pending") === "pending",
+            )
+            .forEach((video) => void requestAnalysis(video.id));
         })
         .catch((error) => {
           if ((error as Error).name !== "AbortError") {
@@ -630,22 +651,99 @@ export default function Home() {
     }
   }
 
+  async function requestAnalysis(id: string) {
+    if (analysisStarted.current.has(id)) return;
+    analysisStarted.current.add(id);
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ itemId: id }),
+      });
+      const result = (await response.json().catch(() => null)) as {
+        status?: string;
+        message?: string;
+        error?: string;
+        transcriptStatus?: TranscriptStatus;
+        analysisStatus?: AnalysisStatus;
+        analysis?: {
+          type?: ContentType;
+          topics?: Topic[];
+          value_score?: number;
+          value_reason?: string;
+          valueFactors?: ValueFactor[];
+        };
+      } | null;
+
+      if (result?.status === "transcript_unavailable") {
+        setVideos((current) =>
+          current.map((video) =>
+            video.id === id
+              ? {
+                  ...video,
+                  transcriptStatus: "unavailable",
+                  analysisStatus: "unavailable",
+                }
+              : video,
+          ),
+        );
+        setNotice(result.message ?? "Transcript unavailable. AI analysis was skipped.");
+        setNoticeTone("info");
+        return;
+      }
+
+      if (!response.ok || result?.status !== "complete" || !result.analysis) {
+        throw new Error(result?.error ?? "Analysis failed");
+      }
+
+      setVideos((current) =>
+        current.map((video) =>
+          video.id === id
+            ? {
+                ...video,
+                type: result.analysis?.type ?? video.type,
+                topics: Array.isArray(result.analysis?.topics)
+                  ? result.analysis.topics
+                  : video.topics,
+                valueScore: result.analysis?.value_score ?? video.valueScore,
+                valueReason: result.analysis?.value_reason ?? video.valueReason,
+                valueFactors: result.analysis?.valueFactors ?? video.valueFactors,
+                transcriptStatus: "available",
+                analysisStatus: "complete",
+              }
+            : video,
+        ),
+      );
+      setNotice("AI selected the content type and topics from the transcript.");
+      setNoticeTone("success");
+    } catch {
+      setVideos((current) =>
+        current.map((video) =>
+          video.id === id ? { ...video, analysisStatus: "error" } : video,
+        ),
+      );
+      setNotice("Transcript analysis is temporarily unavailable.");
+      setNoticeTone("error");
+    }
+  }
+
   function addContent(event: FormEvent) {
     event.preventDefault();
     const value = url.trim();
-    const youtubeId = activeType === "Watch" ? getYouTubeId(value) : undefined;
+    const youtubeId = getYouTubeId(value);
     const webUrl = getWebUrl(value);
 
-    if (activeType === "Watch" && !youtubeId) {
+    if (!webUrl) {
+      setNotice("Paste a valid YouTube or article link beginning with http:// or https://.");
+      setNoticeTone("error");
+      return;
+    }
+    if (isYouTubeUrl(webUrl) && !youtubeId) {
       setNotice("Paste a valid YouTube video link.");
       setNoticeTone("error");
       return;
     }
-    if (activeType === "Read" && !webUrl) {
-      setNotice("Paste a valid article link beginning with http:// or https://.");
-      setNoticeTone("error");
-      return;
-    }
+    const detectedType: ContentType = youtubeId ? "Watch" : "Read";
 
     if (
       videos.some(
@@ -654,14 +752,14 @@ export default function Home() {
           video.url.replace(/\/$/, "") === value.replace(/\/$/, ""),
       )
     ) {
-      setNotice(`Already in ${activeType === "Watch" ? "RePlay" : "ReRead"} — no duplicate added.`);
+      setNotice(`Already in ${detectedType === "Watch" ? "RePlay" : "ReRead"} — no duplicate added.`);
       setNoticeTone("error");
       return;
     }
 
     const addedAt = Date.now();
     const readDetails =
-      activeType === "Read" && webUrl ? articleDetails(webUrl) : undefined;
+      detectedType === "Read" ? articleDetails(webUrl) : undefined;
     const newVideo: Video = {
       id: crypto.randomUUID(),
       youtubeId,
@@ -669,7 +767,7 @@ export default function Home() {
       title: readDetails?.title ?? "Fetching video details…",
       channel: readDetails?.channel ?? "YouTube",
       durationMinutes: 0,
-      type: activeType,
+      type: detectedType,
       topics: [],
       status: "inbox",
       valueScore: 0,
@@ -678,12 +776,15 @@ export default function Home() {
       cooldownUntil: addedAt + COOLDOWN_MINUTES * 60 * 1000,
       progress: 0,
       accent: "red",
+      transcriptStatus: "pending",
+      analysisStatus: "pending",
     };
 
     setVideos((current) => [newVideo, ...current]);
+    setActiveType(detectedType);
     setActiveStatus("inbox");
     setUrl("");
-    if (activeType === "Watch") {
+    if (detectedType === "Watch") {
       setNotice("Saved instantly. Fetching title, duration, and channel…");
       setNoticeTone("info");
       void enrichMetadata(newVideo.id, value);
@@ -1030,7 +1131,10 @@ export default function Home() {
             ) : null}
             <span>in this view</span>
           </p>
-          <p>Prototype scores are shown transparently. AI is not connected yet.</p>
+          <p>
+            GPT-5.4 mini analyzes an item only when its official transcript is
+            accessible.
+          </p>
         </div>
 
         <section className={`video-library ${view}`}>
@@ -1116,9 +1220,17 @@ export default function Home() {
                     </span>
                     <span>
                       <strong>
-                        {video.valueScore ? "Prototype value score" : "AI analysis pending"}
+                        {video.analysisStatus === "unavailable"
+                          ? "Transcript unavailable"
+                          : video.analysisStatus === "complete"
+                            ? "AI value score"
+                            : video.valueScore
+                              ? "Prototype value score"
+                              : "AI analysis pending"}
                       </strong>
-                      {video.valueReason}
+                      {video.analysisStatus === "unavailable"
+                        ? "Official transcript could not be accessed."
+                        : video.valueReason}
                     </span>
                   </div>
                   <div className="card-actions">
@@ -1361,9 +1473,11 @@ export default function Home() {
                     </strong>
                   </div>
                   <p>
-                    {selectedVideo.valueScore
-                      ? "Demo score — these factors are currently hand-authored."
-                      : "Waiting for metadata, goals, and AI analysis."}
+                    {selectedVideo.analysisStatus === "unavailable"
+                      ? "Transcript unavailable — AI analysis was skipped."
+                      : selectedVideo.valueScore
+                        ? selectedVideo.valueReason
+                        : "Waiting for transcript analysis."}
                   </p>
                 </div>
                 {selectedVideo.valueFactors ? (
@@ -1382,7 +1496,11 @@ export default function Home() {
                   </div>
                 ) : (
                   <div className="analysis-empty">
-                    AI will assign evidence-backed factors and topic confidence here.
+                    {selectedVideo.analysisStatus === "unavailable"
+                      ? "No transcript is available through the official YouTube API. ReSync did not call OpenAI."
+                      : selectedVideo.analysisStatus === "error"
+                        ? "Analysis could not run. Check the transcript permission and OpenAI key."
+                        : "GPT-5.4 mini will select Type and Topics and score the transcript here."}
                   </div>
                 )}
               </section>

@@ -132,6 +132,14 @@ Initial content categories include:
 
 #### Requirements
 
+- RePlay is the curated feed of content discovered from followed mentors,
+  channels, and sites.
+- A curated item cannot be watched directly from the feed. I can add it to
+  Inbox, which starts a 20-minute cooldown.
+- When the cooldown ends, I can deliberately move the item from Inbox to Queue.
+- A YouTube link pasted manually enters Inbox directly and starts the same
+  cooldown.
+- Queue contains only videos I explicitly intend to watch.
 - Recommendations should be ranked by expected value to me, not simply
   popularity or recency.
 - The library should show why each video was selected.

@@ -1,8 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { CSSProperties, FormEvent, useEffect, useMemo, useState } from "react";
 
-type Status = "inbox" | "queued" | "watched";
+type Status = "feed" | "inbox" | "queued" | "watched";
 type Topic = "Unsorted" | "AI" | "Development" | "Business" | "CP";
 type ValueFactor = {
   label: string;
@@ -14,10 +14,16 @@ type Video = {
   id: string;
   youtubeId?: string;
   thumbnailUrl?: string;
+  description?: string;
+  publishedAt?: string | null;
+  tags?: string[];
+  captionAvailable?: boolean | null;
+  metadataComplete?: boolean;
   url: string;
   title: string;
   channel: string;
   durationMinutes: number;
+  durationSeconds?: number;
   topic: Topic;
   status: Status;
   valueScore: number;
@@ -32,6 +38,7 @@ type Video = {
 const STORAGE_KEY = "resync-replay-videos";
 const LEGACY_STORAGE_KEY = "later-videos";
 const NOTES_KEY = "resync-replay-notes";
+const SIDEBAR_WIDTH_KEY = "resync-sidebar-width";
 const COOLDOWN_MINUTES = 20;
 
 const starterVideos: Video[] = [
@@ -42,7 +49,7 @@ const starterVideos: Video[] = [
     channel: "Matthew Berman",
     durationMinutes: 18,
     topic: "AI",
-    status: "queued",
+    status: "feed",
     valueScore: 94,
     valueReason: "Directly useful for your AI app",
     valueFactors: [
@@ -66,7 +73,7 @@ const starterVideos: Video[] = [
     channel: "Theo",
     durationMinutes: 24,
     topic: "Development",
-    status: "inbox",
+    status: "feed",
     valueScore: 89,
     valueReason: "High relevance to perceived speed",
     valueFactors: [
@@ -90,7 +97,7 @@ const starterVideos: Video[] = [
     channel: "Alex Hormozi",
     durationMinutes: 12,
     topic: "Business",
-    status: "queued",
+    status: "feed",
     valueScore: 83,
     valueReason: "Short, practical, immediately actionable",
     valueFactors: [
@@ -114,7 +121,7 @@ const starterVideos: Video[] = [
     channel: "Competitive Programming",
     durationMinutes: 31,
     topic: "CP",
-    status: "watched",
+    status: "feed",
     valueScore: 78,
     valueReason: "Supports deliberate problem-solving practice",
     valueFactors: [
@@ -145,11 +152,24 @@ const topics: Array<"All" | Topic> = [
 function getYouTubeId(value: string) {
   try {
     const url = new URL(value.trim());
-    if (url.hostname === "youtu.be") return url.pathname.slice(1).split("/")[0];
-    if (url.hostname.includes("youtube.com")) {
-      if (url.pathname.startsWith("/shorts/")) return url.pathname.split("/")[2];
-      return url.searchParams.get("v") ?? undefined;
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    let candidate: string | null | undefined;
+    if (hostname === "youtu.be") {
+      candidate = url.pathname.split("/").filter(Boolean)[0];
+    } else if (hostname === "youtube.com" || hostname.endsWith(".youtube.com")) {
+      if (
+        url.pathname.startsWith("/shorts/") ||
+        url.pathname.startsWith("/embed/") ||
+        url.pathname.startsWith("/live/")
+      ) {
+        candidate = url.pathname.split("/").filter(Boolean)[1];
+      } else if (url.pathname === "/watch") {
+        candidate = url.searchParams.get("v");
+      }
     }
+    return candidate && /^[A-Za-z0-9_-]{11}$/.test(candidate)
+      ? candidate
+      : undefined;
   } catch {
     return undefined;
   }
@@ -169,6 +189,17 @@ function countdown(until: number, now: number) {
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+function formatDuration(seconds?: number, minutes?: number) {
+  const totalSeconds = seconds ?? (minutes ? minutes * 60 : 0);
+  if (!totalSeconds) return "duration unavailable";
+  const hours = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  return hours
+    ? `${hours}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+    : `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
 function normalizeVideo(video: Partial<Video>): Video {
   const validTopics: Topic[] = ["Unsorted", "AI", "Development", "Business", "CP"];
   const starterMatch = starterVideos.find((item) => item.id === video.id);
@@ -176,14 +207,26 @@ function normalizeVideo(video: Partial<Video>): Video {
     id: video.id ?? crypto.randomUUID(),
     youtubeId: video.youtubeId,
     thumbnailUrl: video.thumbnailUrl,
+    description: video.description,
+    publishedAt: video.publishedAt,
+    tags: video.tags,
+    captionAvailable: video.captionAvailable,
+    metadataComplete: video.metadataComplete,
     url: video.url ?? "",
     title: video.title ?? "Saved YouTube video",
     channel: video.channel ?? "Metadata unavailable",
     durationMinutes: video.durationMinutes ?? 0,
+    durationSeconds:
+      video.durationSeconds ??
+      (video.durationMinutes ? video.durationMinutes * 60 : 0),
     topic: validTopics.includes(video.topic as Topic)
       ? (video.topic as Topic)
       : "Unsorted",
-    status: video.status ?? "inbox",
+    status:
+      starterMatch?.status ??
+      (["feed", "inbox", "queued", "watched"].includes(video.status ?? "")
+        ? (video.status as Status)
+        : "feed"),
     valueScore: video.valueScore ?? 0,
     valueReason: video.valueReason ?? "AI analysis pending",
     valueFactors: video.valueFactors ?? starterMatch?.valueFactors,
@@ -200,7 +243,10 @@ export default function Home() {
   const [now, setNow] = useState(0);
   const [url, setUrl] = useState("");
   const [notice, setNotice] = useState("");
-  const [activeStatus, setActiveStatus] = useState<Status | "all">("all");
+  const [noticeTone, setNoticeTone] = useState<"info" | "success" | "error">(
+    "info",
+  );
+  const [activeStatus, setActiveStatus] = useState<Status>("feed");
   const [activeTopic, setActiveTopic] = useState<"All" | Topic>("All");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("value");
@@ -208,6 +254,7 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [lastRemoved, setLastRemoved] = useState<Video | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [sidebarWidth, setSidebarWidth] = useState(228);
 
   useEffect(() => {
     window.queueMicrotask(() => {
@@ -229,6 +276,12 @@ export default function Home() {
           setNotes({});
         }
       }
+      const savedSidebarWidth = Number(
+        window.localStorage.getItem(SIDEBAR_WIDTH_KEY),
+      );
+      if (savedSidebarWidth >= 190 && savedSidebarWidth <= 380) {
+        setSidebarWidth(savedSidebarWidth);
+      }
       setNow(Date.now());
       setReady(true);
     });
@@ -248,6 +301,12 @@ export default function Home() {
   }, [notes, ready]);
 
   useEffect(() => {
+    if (ready) {
+      window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+    }
+  }, [ready, sidebarWidth]);
+
+  useEffect(() => {
     if (!selectedId) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelectedId(null);
@@ -264,7 +323,7 @@ export default function Home() {
 
   const counts = useMemo(
     () => ({
-      all: videos.length,
+      feed: videos.filter((video) => video.status === "feed").length,
       inbox: videos.filter((video) => video.status === "inbox").length,
       queued: videos.filter((video) => video.status === "queued").length,
       watched: videos.filter((video) => video.status === "watched").length,
@@ -274,7 +333,7 @@ export default function Home() {
 
   const visibleVideos = useMemo(() => {
     const result = videos.filter((video) => {
-      const matchesStatus = activeStatus === "all" || video.status === activeStatus;
+      const matchesStatus = video.status === activeStatus;
       const matchesTopic = activeTopic === "All" || video.topic === activeTopic;
       const query = search.trim().toLowerCase();
       const matchesSearch =
@@ -286,7 +345,14 @@ export default function Home() {
 
     return result.sort((a, b) => {
       if (sort === "newest") return b.addedAt - a.addedAt;
-      if (sort === "shortest") return a.durationMinutes - b.durationMinutes;
+      if (sort === "shortest") {
+        const aDuration = a.durationSeconds || 0;
+        const bDuration = b.durationSeconds || 0;
+        if (!aDuration && !bDuration) return b.addedAt - a.addedAt;
+        if (!aDuration) return 1;
+        if (!bDuration) return -1;
+        return aDuration - bDuration;
+      }
       return b.valueScore - a.valueScore;
     });
   }, [activeStatus, activeTopic, search, sort, videos]);
@@ -299,11 +365,30 @@ export default function Home() {
   async function enrichMetadata(id: string, videoUrl: string) {
     try {
       const response = await fetch(`/api/youtube?url=${encodeURIComponent(videoUrl)}`);
-      if (!response.ok) throw new Error("Metadata request failed");
+      if (!response.ok) {
+        const problem = (await response.json().catch(() => null)) as {
+          error?: string;
+          code?: string;
+        } | null;
+        if (response.status === 400 || response.status === 404) {
+          setVideos((current) => current.filter((video) => video.id !== id));
+          setNotice(problem?.error ?? "That YouTube link is invalid.");
+          setNoticeTone("error");
+          return;
+        }
+        throw new Error("Metadata request failed");
+      }
       const metadata = (await response.json()) as {
         title: string;
         channel: string;
         thumbnailUrl?: string;
+        description?: string;
+        durationMinutes?: number;
+        durationSeconds?: number;
+        publishedAt?: string | null;
+        tags?: string[];
+        captionAvailable?: boolean | null;
+        metadataComplete?: boolean;
       };
       setVideos((current) =>
         current.map((video) =>
@@ -313,20 +398,33 @@ export default function Home() {
                 title: metadata.title,
                 channel: metadata.channel,
                 thumbnailUrl: metadata.thumbnailUrl,
+                description: metadata.description,
+                durationMinutes: metadata.durationMinutes ?? 0,
+                durationSeconds: metadata.durationSeconds ?? 0,
+                publishedAt: metadata.publishedAt,
+                tags: metadata.tags,
+                captionAvailable: metadata.captionAvailable,
+                metadataComplete: metadata.metadataComplete,
               }
             : video,
         ),
       );
-      setNotice(`Saved and identified. ${COOLDOWN_MINUTES}-minute cooldown active.`);
+      setNotice(
+        metadata.metadataComplete
+          ? `Saved to Inbox with full metadata. ${COOLDOWN_MINUTES}-minute cooldown started.`
+          : `Saved to Inbox. Add the YouTube API key to fetch duration and full metadata.`,
+      );
+      setNoticeTone(metadata.metadataComplete ? "success" : "info");
     } catch {
       setVideos((current) =>
         current.map((video) =>
           video.id === id
-            ? { ...video, channel: "Metadata unavailable — link is still saved" }
+            ? { ...video, channel: "Metadata temporarily unavailable" }
             : video,
         ),
       );
-      setNotice("Saved. YouTube metadata could not be loaded for this link.");
+      setNotice("Saved to Inbox, but YouTube metadata is temporarily unavailable.");
+      setNoticeTone("error");
     }
   }
 
@@ -337,11 +435,13 @@ export default function Home() {
 
     if (!youtubeId) {
       setNotice("Paste a valid YouTube video link.");
+      setNoticeTone("error");
       return;
     }
 
     if (videos.some((video) => video.youtubeId === youtubeId || video.url === value)) {
       setNotice("Already in RePlay — no duplicate added.");
+      setNoticeTone("error");
       return;
     }
 
@@ -364,8 +464,10 @@ export default function Home() {
     };
 
     setVideos((current) => [newVideo, ...current]);
+    setActiveStatus("inbox");
     setUrl("");
     setNotice("Saved instantly. Fetching title and channel…");
+    setNoticeTone("info");
     void enrichMetadata(newVideo.id, value);
   }
 
@@ -379,11 +481,61 @@ export default function Home() {
     );
   }
 
+  function addToInbox(id: string) {
+    const addedAt = now;
+    setVideos((current) =>
+      current.map((video) =>
+        video.id === id
+          ? {
+              ...video,
+              status: "inbox",
+              addedAt,
+              cooldownUntil: addedAt + COOLDOWN_MINUTES * 60 * 1000,
+            }
+          : video,
+      ),
+    );
+    setActiveStatus("inbox");
+    setNotice(`Added to Inbox. ${COOLDOWN_MINUTES}-minute cooldown started.`);
+    setNoticeTone("success");
+  }
+
+  function moveToQueue(id: string) {
+    setVideos((current) =>
+      current.map((video) =>
+        video.id === id && video.cooldownUntil <= now
+          ? { ...video, status: "queued" }
+          : video,
+      ),
+    );
+    setActiveStatus("queued");
+    setNotice("Cooldown complete. Video moved to Queue.");
+    setNoticeTone("success");
+  }
+
+  function startSidebarResize(startX: number) {
+    const startWidth = sidebarWidth;
+    const onMove = (event: PointerEvent) => {
+      setSidebarWidth(
+        Math.min(380, Math.max(190, startWidth + event.clientX - startX)),
+      );
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("resizing-sidebar");
+    };
+    document.body.classList.add("resizing-sidebar");
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
   function removeVideo(video: Video) {
     setVideos((current) => current.filter((item) => item.id !== video.id));
     setLastRemoved(video);
     if (selectedId === video.id) setSelectedId(null);
     setNotice("Video removed from RePlay.");
+    setNoticeTone("success");
   }
 
   function undoRemove() {
@@ -391,10 +543,14 @@ export default function Home() {
     setVideos((current) => [lastRemoved, ...current]);
     setLastRemoved(null);
     setNotice("Video restored.");
+    setNoticeTone("success");
   }
 
   return (
-    <main className="app-shell">
+    <main
+      className="app-shell"
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+    >
       <aside className="sidebar">
         <a className="brand" href="#" aria-label="ReSync home">
           <span className="brand-mark">R</span>
@@ -404,7 +560,7 @@ export default function Home() {
         <p className="sidebar-label page-label">Library</p>
         <nav className="primary-nav" aria-label="RePlay sections">
           {[
-            ["all", "RePlay"],
+            ["feed", "RePlay"],
             ["inbox", "Inbox"],
             ["queued", "Queue"],
             ["watched", "Watched"],
@@ -412,7 +568,7 @@ export default function Home() {
             <button
               className={activeStatus === key ? "nav-item active" : "nav-item"}
               key={key}
-              onClick={() => setActiveStatus(key as Status | "all")}
+              onClick={() => setActiveStatus(key as Status)}
             >
               <span>{label}</span>
               <span className="nav-count">{counts[key as keyof typeof counts]}</span>
@@ -443,8 +599,27 @@ export default function Home() {
           <div className="storage-track">
             <span style={{ width: `${Math.min(100, videos.length * 7)}%` }} />
           </div>
-          <p>Cloud sync arrives with the backend.</p>
+          <p>Videos and notes are currently saved in this browser.</p>
         </div>
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          aria-valuemin={190}
+          aria-valuemax={380}
+          aria-valuenow={sidebarWidth}
+          tabIndex={0}
+          onPointerDown={(event) => startSidebarResize(event.clientX)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") {
+              setSidebarWidth((width) => Math.max(190, width - 10));
+            }
+            if (event.key === "ArrowRight") {
+              setSidebarWidth((width) => Math.min(380, width + 10));
+            }
+          }}
+        />
       </aside>
 
       <section className="main-panel">
@@ -453,7 +628,7 @@ export default function Home() {
             <p className="eyebrow">ReSync / RePlay</p>
             <h1>Save the urge. Watch with intention.</h1>
             <p className="intro-copy">
-              A calmer watch-later library that gives every new video room to cool down.
+              Curated discoveries become intentional choices: Inbox, cooldown, then Queue.
             </p>
           </div>
           <div className="profile">MT</div>
@@ -471,19 +646,20 @@ export default function Home() {
               onChange={(event) => {
                 setUrl(event.target.value);
                 setNotice("");
+                setNoticeTone("info");
               }}
               placeholder="Paste a YouTube link…"
               inputMode="url"
               autoComplete="off"
             />
             <span className="paste-hint">⌘ V</span>
-            <button type="submit">Save to RePlay</button>
+            <button type="submit">Add to Inbox</button>
           </form>
-          <div className="capture-meta">
+          <div className={`capture-meta ${noticeTone}`}>
             <span className="status-light" />
             <span>
               {notice ||
-                `Title and channel load now · ${COOLDOWN_MINUTES}-minute watch cooldown`}
+                `Pasted links go to Inbox · ${COOLDOWN_MINUTES}-minute cooldown`}
             </span>
           </div>
         </section>
@@ -553,7 +729,12 @@ export default function Home() {
 
         <section className={`video-library ${view}`}>
           {visibleVideos.map((video, index) => {
-            const isCooling = now > 0 && video.cooldownUntil > now;
+            const isCooling =
+              video.status === "inbox" && now > 0 && video.cooldownUntil > now;
+            const isInboxReady =
+              video.status === "inbox" && now > 0 && video.cooldownUntil <= now;
+            const canWatch =
+              video.status === "queued" || video.status === "watched";
             const imageUrl =
               video.thumbnailUrl ??
               (video.youtubeId
@@ -574,14 +755,24 @@ export default function Home() {
                   }
                 >
                   <span className="rank">#{index + 1}</span>
-                  {isCooling ? (
+                  {video.status === "feed" ? (
+                    <span className="cooldown-pill">Curated</span>
+                  ) : isCooling ? (
                     <span className="cooldown-pill">Cooling · {countdown(video.cooldownUntil, now)}</span>
+                  ) : isInboxReady ? (
+                    <span className="cooldown-pill ready">Ready for Queue</span>
                   ) : null}
-                  <span className={isCooling ? "play-button locked" : "play-button"}>
-                    {isCooling ? "◷" : "▶"}
+                  <span className={canWatch ? "play-button" : "play-button locked"}>
+                    {video.status === "feed"
+                      ? "+"
+                      : isCooling
+                        ? "◷"
+                        : isInboxReady
+                          ? "→"
+                          : "▶"}
                   </span>
                   <span className="duration">
-                    {video.durationMinutes ? `${video.durationMinutes} min` : "duration pending"}
+                    {formatDuration(video.durationSeconds, video.durationMinutes)}
                   </span>
                   {video.progress > 0 && video.progress < 100 ? (
                     <span className="progress" style={{ width: `${video.progress}%` }} />
@@ -611,7 +802,25 @@ export default function Home() {
                     </span>
                   </div>
                   <div className="card-actions">
-                    {video.status === "watched" ? (
+                    {video.status === "feed" ? (
+                      <button
+                        className="primary-action"
+                        onClick={() => addToInbox(video.id)}
+                      >
+                        Add to Inbox
+                      </button>
+                    ) : video.status === "inbox" && isCooling ? (
+                      <button className="cooling-action" disabled>
+                        Cooling · {countdown(video.cooldownUntil, now)}
+                      </button>
+                    ) : video.status === "inbox" ? (
+                      <button
+                        className="primary-action"
+                        onClick={() => moveToQueue(video.id)}
+                      >
+                        Move to Queue
+                      </button>
+                    ) : video.status === "watched" ? (
                       <button
                         className="secondary-action"
                         onClick={() => changeStatus(video.id, "queued")}
@@ -619,20 +828,19 @@ export default function Home() {
                         Watched ✓
                       </button>
                     ) : (
-                      <button
-                        className="primary-action"
-                        onClick={() => changeStatus(video.id, "queued")}
-                      >
-                        {video.status === "queued" ? "In queue" : "Add to queue"}
+                      <button className="secondary-action" disabled>
+                        In Queue
                       </button>
                     )}
-                    <button
-                      className="icon-action"
-                      aria-label={`Mark ${video.title} watched`}
-                      onClick={() => changeStatus(video.id, "watched")}
-                    >
-                      ✓
-                    </button>
+                    {canWatch ? (
+                      <button
+                        className="icon-action"
+                        aria-label={`Mark ${video.title} watched`}
+                        onClick={() => changeStatus(video.id, "watched")}
+                      >
+                        ✓
+                      </button>
+                    ) : null}
                     <button
                       className="icon-action remove"
                       aria-label={`Remove ${video.title}`}
@@ -684,7 +892,21 @@ export default function Home() {
             </button>
             <div className="player-column">
               <div className="player-stage">
-                {selectedVideo.cooldownUntil > now ? (
+                {selectedVideo.status === "feed" ? (
+                  <div className="cooldown-screen">
+                    <span className="cooldown-clock">+</span>
+                    <p className="eyebrow">Curated discovery</p>
+                    <h2>Worth saving?</h2>
+                    <p>
+                      Add this video to Inbox to begin its 20-minute impulse buffer.
+                      It cannot be watched directly from the curated feed.
+                    </p>
+                    <button onClick={() => addToInbox(selectedVideo.id)}>
+                      Add to Inbox
+                    </button>
+                  </div>
+                ) : selectedVideo.status === "inbox" &&
+                  selectedVideo.cooldownUntil > now ? (
                   <div className="cooldown-screen">
                     <span className="cooldown-clock">◷</span>
                     <p className="eyebrow">Impulse buffer</p>
@@ -695,6 +917,19 @@ export default function Home() {
                     </p>
                     <button onClick={() => removeVideo(selectedVideo)}>
                       I don&apos;t need this video
+                    </button>
+                  </div>
+                ) : selectedVideo.status === "inbox" ? (
+                  <div className="cooldown-screen">
+                    <span className="cooldown-clock ready">✓</span>
+                    <p className="eyebrow">Cooldown complete</p>
+                    <h2>Still valuable?</h2>
+                    <p>
+                      The initial urge has passed. Move it to Queue only if you still
+                      intend to watch it.
+                    </p>
+                    <button onClick={() => moveToQueue(selectedVideo.id)}>
+                      Move to Queue
                     </button>
                   </div>
                 ) : selectedVideo.youtubeId ? (
@@ -720,9 +955,12 @@ export default function Home() {
                   <h2>{selectedVideo.title}</h2>
                   <p>{selectedVideo.channel}</p>
                 </div>
-                <a href={selectedVideo.url} target="_blank" rel="noreferrer">
-                  Open on YouTube ↗
-                </a>
+                {selectedVideo.status === "queued" ||
+                selectedVideo.status === "watched" ? (
+                  <a href={selectedVideo.url} target="_blank" rel="noreferrer">
+                    Open on YouTube ↗
+                  </a>
+                ) : null}
               </div>
             </div>
 
@@ -774,7 +1012,7 @@ export default function Home() {
               <section className="notes-panel">
                 <div className="section-title">
                   <h3>Working notes</h3>
-                  <span>saved locally</span>
+                  <span>saved in this browser</span>
                 </div>
                 <textarea
                   value={notes[selectedVideo.id] ?? ""}

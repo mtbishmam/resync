@@ -26,7 +26,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const image = new URL("/og.png", base).toString();
   const title = "RePlay — Intentional video library by ReSync";
   const description =
-    "Save the urge, let it cool down, then watch and think with intention.";
+    "A curated video feed that moves intentional choices through Inbox, cooldown, and Queue.";
 
   return {
     metadataBase: base,

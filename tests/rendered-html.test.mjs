@@ -32,5 +32,7 @@ test("server-renders the ReSync RePlay library shell", async () => {
   assert.match(html, /Save the urge\. Watch with intention\./);
   assert.match(html, /Paste a YouTube link/);
   assert.match(html, /ReSync \/ RePlay/);
+  assert.match(html, /Add to Inbox/);
+  assert.match(html, /Curated discoveries become intentional choices/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });

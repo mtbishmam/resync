@@ -382,6 +382,18 @@ button {
   background: #39a873;
 }
 
+.capture-meta.info .status-light {
+  background: #6b8fc9;
+}
+
+.capture-meta.error {
+  color: #b6514b;
+}
+
+.capture-meta.error .status-light {
+  background: var(--red);
+}
+
 .library-toolbar {
   display: flex;
   max-width: 1320px;
@@ -1604,5 +1616,141 @@ button {
 
   .ai-column {
     padding: 24px 18px;
+  }
+}
+
+/* Denser RePlay feed and adjustable navigation */
+
+.app-shell {
+  grid-template-columns: var(--sidebar-width, 228px) minmax(0, 1fr);
+}
+
+.sidebar {
+  position: sticky;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  right: -5px;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resizer::after {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  width: 1px;
+  height: 100%;
+  background: transparent;
+  content: "";
+  transition: background 140ms ease;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after,
+.resizing-sidebar .sidebar-resizer::after {
+  background: var(--red);
+}
+
+.resizing-sidebar {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.main-panel {
+  padding: 32px 22px 60px;
+}
+
+.topbar,
+.capture-panel,
+.library-toolbar,
+.library-summary,
+.video-library,
+.empty-state {
+  width: 100%;
+  max-width: none;
+}
+
+.topbar {
+  margin-bottom: 22px;
+}
+
+.capture-panel {
+  margin-bottom: 22px;
+}
+
+.video-library.grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.video-library.grid .play-button {
+  width: 46px;
+  height: 46px;
+}
+
+.video-library.grid .card-content {
+  padding: 13px 14px 12px;
+}
+
+.video-library.grid .value-row {
+  margin: 11px 0;
+}
+
+.cooldown-pill.ready {
+  background: rgba(31, 117, 78, 0.82);
+}
+
+.cooldown-clock.ready {
+  color: #55ba83;
+}
+
+.cooling-action {
+  flex: 1;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 8px;
+  background: #f0f0ed;
+  color: #8b9095;
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.replay-modal {
+  width: 100vw;
+  height: 100vh;
+  grid-template-columns: minmax(0, 70fr) minmax(330px, 30fr);
+  border: 0;
+  border-radius: 0;
+}
+
+.modal-backdrop {
+  padding: 0;
+}
+
+@media (max-width: 1100px) {
+  .video-library.grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .video-library.grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 820px) {
+  .sidebar-resizer {
+    display: none;
+  }
+
+  .video-library.grid {
+    grid-template-columns: 1fr;
   }
 }

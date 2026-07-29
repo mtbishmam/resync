@@ -9,6 +9,7 @@ async function loadBackground() {
   const createdTabs = [];
   const removedTabs = [];
   const badgeUpdates = [];
+  const notifications = [];
   const alarms = [];
   let messageListener;
 
@@ -50,7 +51,15 @@ async function loadBackground() {
       },
       onAlarm: { addListener() {} },
     },
+    notifications: {
+      async create(id, options) {
+        notifications.push({ id, ...options });
+      },
+    },
     runtime: {
+      getURL(path) {
+        return `chrome-extension://resync/${path}`;
+      },
       onMessage: {
         addListener(listener) {
           messageListener = listener;
@@ -114,6 +123,7 @@ async function loadBackground() {
     badgeUpdates,
     createdTabs,
     flushQueue,
+    notifications,
     removedTabs,
     sendMessage,
     state,
@@ -167,6 +177,12 @@ test("rapid captures remain separate and acknowledgements remove only their matc
   assert.deepEqual(background.removedTabs, [31]);
   assert.equal(background.state.captureFeedback.captureId, first.captureId);
   assert.equal(background.state.captureFeedback.ok, true);
+  assert.equal(background.notifications.length, 1);
+  assert.equal(background.notifications[0].title, "Saved to ReSync");
+  assert.equal(
+    background.notifications[0].iconUrl,
+    "chrome-extension://resync/icon.svg",
+  );
   assert.deepEqual(background.badgeUpdates.at(-1), {
     type: "text",
     text: "…",

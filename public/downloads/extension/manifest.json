@@ -1,9 +1,16 @@
 {
   "manifest_version": 3,
   "name": "ReSync Capture",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Capture YouTube transcripts and article text into ReSync.",
-  "permissions": ["activeTab", "alarms", "scripting", "storage", "tabs"],
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "notifications",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
   "host_permissions": [
     "https://*.youtube.com/*",
     "https://youtu.be/*",
@@ -11,6 +18,7 @@
   ],
   "action": {
     "default_title": "Capture in ReSync",
+    "default_icon": "icon.svg",
     "default_popup": "popup.html"
   },
   "background": {

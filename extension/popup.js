@@ -56,35 +56,61 @@ async function captureVisiblePage() {
       element.getClientRects().length > 0 &&
       getComputedStyle(element).visibility !== "hidden";
 
-    const expand = Array.from(
-      document.querySelectorAll(
-        "ytd-text-inline-expander #expand, #description-inline-expander #expand",
-      ),
-    ).find(isVisible);
-    expand?.click();
+    const originalX = window.scrollX;
+    const originalY = window.scrollY;
+    const htmlScrollBehavior = document.documentElement.style.scrollBehavior;
+    const bodyScrollBehavior = document.body.style.scrollBehavior;
+    document.documentElement.style.setProperty(
+      "scroll-behavior",
+      "auto",
+      "important",
+    );
+    document.body.style.setProperty("scroll-behavior", "auto", "important");
+    const holdViewport = () => {
+      if (window.scrollX !== originalX || window.scrollY !== originalY) {
+        window.scrollTo(originalX, originalY);
+      }
+    };
+    window.addEventListener("scroll", holdViewport, { passive: true });
+    const holdTimer = window.setInterval(holdViewport, 40);
 
-    let transcriptControl = null;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      transcriptControl = Array.from(
-        document.querySelectorAll("button, [role='button']"),
-      ).find(
-        (element) =>
-          isVisible(element) &&
-          /show transcript/i.test(
-            `${element.getAttribute("aria-label") ?? ""} ${element.textContent ?? ""}`,
-          ),
-      );
-      if (transcriptControl) break;
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    transcriptControl?.click();
+    try {
+      const expand = Array.from(
+        document.querySelectorAll(
+          "ytd-text-inline-expander #expand, #description-inline-expander #expand",
+        ),
+      ).find(isVisible);
+      expand?.click();
 
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      const text = transcriptText();
-      if (text.length >= 40) return text;
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      let transcriptControl = null;
+      for (let attempt = 0; attempt < 15; attempt += 1) {
+        transcriptControl = Array.from(
+          document.querySelectorAll("button, [role='button']"),
+        ).find(
+          (element) =>
+            isVisible(element) &&
+            /show transcript/i.test(
+              `${element.getAttribute("aria-label") ?? ""} ${element.textContent ?? ""}`,
+            ),
+        );
+        if (transcriptControl) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      transcriptControl?.click();
+
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const text = transcriptText();
+        if (text.length >= 40) return text;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return "";
+    } finally {
+      window.clearInterval(holdTimer);
+      window.removeEventListener("scroll", holdViewport);
+      document.documentElement.style.scrollBehavior = htmlScrollBehavior;
+      document.body.style.scrollBehavior = bodyScrollBehavior;
+      window.scrollTo(originalX, originalY);
     }
-    return "";
   }
 
   if (youtube) {
@@ -154,7 +180,7 @@ async function capture() {
       const message = error instanceof Error ? error.message : String(error);
       if (/cannot access|permission|host/i.test(message)) {
         throw new Error(
-          "ReSync needs access to YouTube. Reload version 0.2.1 and allow its YouTube permission.",
+          "ReSync needs access to YouTube. Reload version 0.2.2 and allow its YouTube permission.",
         );
       }
       throw error;

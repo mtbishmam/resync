@@ -534,7 +534,7 @@ export default function Home() {
     "info",
   );
   const [activeType, setActiveType] = useState<ContentType>("Watch");
-  const [activeStatus, setActiveStatus] = useState<Status>("feed");
+  const [activeStatus, setActiveStatus] = useState<Status>("inbox");
   const [activeTopic, setActiveTopic] = useState<"All" | Topic>("All");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("value");

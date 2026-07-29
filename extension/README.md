@@ -22,7 +22,8 @@ Click the pinned icon once while viewing a YouTube video or article. Capture
 starts immediately, ReSync saves through a background tab, and the toolbar
 badge shows a green check on success or a red exclamation mark on failure.
 
-Version 0.2.1 keeps a separate persistent queue entry for every capture. Rapid
+Version 0.2.2 keeps a separate persistent queue entry for every capture. Rapid
 captures cannot overwrite each other, successful acknowledgements remove only
 their matching entry, and unconfirmed captures remain queued for automatic
-retry.
+retry. YouTube transcript capture holds the current viewport in place, and a
+system notification plus the toolbar badge confirms the final result.

@@ -9,9 +9,22 @@ function withQueueLock(operation) {
   return nextOperation;
 }
 
-async function setBadge(text, color) {
+async function setBadge(text, color, title = "Capture in ReSync") {
   await chrome.action.setBadgeBackgroundColor({ color });
   await chrome.action.setBadgeText({ text });
+  if (chrome.action.setTitle) {
+    await chrome.action.setTitle({ title });
+  }
+}
+
+async function showFeedbackNotification(feedback) {
+  if (!chrome.notifications?.create) return;
+  await chrome.notifications.create(`resync-${feedback.captureId}`, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icon.svg"),
+    title: feedback.ok ? "Saved to ReSync" : "ReSync capture needs attention",
+    message: feedback.message,
+  });
 }
 
 async function readQueue() {
@@ -83,7 +96,7 @@ async function enqueueCapture(capture) {
   await writeQueue(queue);
   await syncRetryAlarm(queue);
   await chrome.storage.local.remove("captureFeedback");
-  await setBadge("…", "#555555");
+  await setBadge("…", "#555555", "ReSync: sending capture…");
 
   // Retry older unsent captures whenever the user makes a new capture. Each
   // payload keeps its own ID, so completing one can never erase another.
@@ -116,12 +129,13 @@ async function finishCapture(message, sender) {
   };
   await chrome.storage.local.set({ captureFeedback: feedback });
   if (!feedback.ok) {
-    await setBadge("!", "#c62828");
+    await setBadge("!", "#c62828", `ReSync: ${feedback.message}`);
   } else if (remaining.length > 0) {
-    await setBadge("…", "#555555");
+    await setBadge("…", "#555555", "ReSync: saved; more captures are sending…");
   } else {
-    await setBadge("✓", "#16803c");
+    await setBadge("✓", "#16803c", "ReSync: saved to Inbox");
   }
+  await showFeedbackNotification(feedback).catch(() => {});
 
   if (sender.tab?.id) {
     await chrome.tabs.remove(sender.tab.id).catch(() => {});
@@ -145,7 +159,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "resync-capture-started") {
     void chrome.storage.local.remove("captureFeedback");
-    void setBadge("…", "#555555");
+    void setBadge("…", "#555555", "ReSync: sending capture…");
     return;
   }
 

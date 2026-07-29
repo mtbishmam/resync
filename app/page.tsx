@@ -46,7 +46,8 @@ const STORAGE_KEY = "resync-replay-videos";
 const LEGACY_STORAGE_KEY = "later-videos";
 const NOTES_KEY = "resync-replay-notes";
 const SIDEBAR_WIDTH_KEY = "resync-sidebar-width";
-const COOLDOWN_MINUTES = 20;
+// Five minutes keeps the cooldown easy to test. The final ReSync release uses 24 hours.
+const COOLDOWN_MINUTES = 5;
 
 const starterVideos: Video[] = [
   {
@@ -210,9 +211,16 @@ function formatDuration(seconds?: number, minutes?: number) {
 function normalizeVideo(video: Partial<Video>): Video {
   const validTopics: Topic[] = ["Unsorted", "AI", "Development", "Business", "CP"];
   const starterMatch = starterVideos.find((item) => item.id === video.id);
+  const addedAt = video.addedAt ?? Date.now();
+  const status =
+    starterMatch?.status ??
+    (["feed", "inbox", "queued", "watched"].includes(video.status ?? "")
+      ? (video.status as Status)
+      : "feed");
+  const configuredCooldownUntil = addedAt + COOLDOWN_MINUTES * 60 * 1000;
   return {
     id: video.id ?? crypto.randomUUID(),
-    youtubeId: video.youtubeId,
+    youtubeId: video.youtubeId ?? getYouTubeId(video.url ?? ""),
     thumbnailUrl: video.thumbnailUrl,
     description: video.description,
     publishedAt: video.publishedAt,
@@ -229,16 +237,15 @@ function normalizeVideo(video: Partial<Video>): Video {
     topic: validTopics.includes(video.topic as Topic)
       ? (video.topic as Topic)
       : "Unsorted",
-    status:
-      starterMatch?.status ??
-      (["feed", "inbox", "queued", "watched"].includes(video.status ?? "")
-        ? (video.status as Status)
-        : "feed"),
+    status,
     valueScore: video.valueScore ?? 0,
     valueReason: video.valueReason ?? "AI analysis pending",
     valueFactors: video.valueFactors ?? starterMatch?.valueFactors,
-    addedAt: video.addedAt ?? Date.now(),
-    cooldownUntil: video.cooldownUntil ?? 0,
+    addedAt,
+    cooldownUntil:
+      status === "inbox"
+        ? Math.min(video.cooldownUntil || configuredCooldownUntil, configuredCooldownUntil)
+        : video.cooldownUntil ?? 0,
     progress: video.progress ?? 0,
     accent: video.accent ?? "red",
   };
@@ -922,7 +929,8 @@ export default function Home() {
                     <p className="eyebrow">Curated discovery</p>
                     <h2>Worth saving?</h2>
                     <p>
-                      Add this video to Inbox to begin its 20-minute impulse buffer.
+                      Add this video to Inbox to begin its {COOLDOWN_MINUTES}-minute
+                      impulse buffer.
                       It cannot be watched directly from the curated feed.
                     </p>
                     <button onClick={() => addToInbox(selectedVideo.id)}>

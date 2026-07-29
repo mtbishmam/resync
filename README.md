@@ -3,7 +3,8 @@
 A fast, intentional YouTube watch-later library inside ReSync.
 
 The current version is a frontend-first prototype. RePlay is the curated feed;
-selected videos move through Inbox, a 20-minute cooldown, Queue, and Watched.
+selected videos move through Inbox, a 5-minute testing cooldown, Queue, and
+Watched. The final release will use a 24-hour cooldown.
 Pasted links enter Inbox directly. It supports YouTube metadata enrichment,
 duplicate and invalid-link prevention, removal with undo, a fullscreen 70/30
 player and notes workspace, a resizable sidebar, grid/list views, filtering,

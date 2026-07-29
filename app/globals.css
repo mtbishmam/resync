@@ -1460,6 +1460,76 @@ button {
   text-align: center;
 }
 
+.analysis-empty > p {
+  margin: 0;
+}
+
+.transcript-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 7px;
+  padding-top: 13px;
+}
+
+.transcript-actions button,
+.transcript-paste button {
+  padding: 7px 10px;
+  border: 1px solid #242b34;
+  border-radius: 7px;
+  background: #242b34;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.transcript-actions button.secondary {
+  border-color: #d9dcd8;
+  background: #fff;
+  color: #62686e;
+}
+
+.transcript-actions button:disabled,
+.transcript-paste button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.transcript-actions span {
+  flex-basis: 100%;
+  color: #a1a6aa;
+  font-size: 8px;
+}
+
+.transcript-file-input {
+  display: none;
+}
+
+.transcript-paste {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.transcript-paste textarea {
+  min-height: 120px;
+  resize: vertical;
+  padding: 9px 10px;
+  border: 1px solid #dedfdb;
+  border-radius: 8px;
+  outline: 0;
+  background: #fbfbf9;
+  color: #34393e;
+  font: inherit;
+  line-height: 1.55;
+}
+
+.transcript-paste textarea:focus {
+  border-color: #a9a0dd;
+  box-shadow: 0 0 0 2px rgba(105, 84, 186, 0.08);
+}
+
 .properties-panel {
   padding: 8px 14px 10px;
 }

@@ -60,6 +60,19 @@ const CREATE_STATEMENTS = [
     updated_at INTEGER NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS note_anchors_note_id_idx ON note_anchors (note_id)",
+  `CREATE TABLE IF NOT EXISTS transcripts (
+    id TEXT PRIMARY KEY NOT NULL,
+    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    body_text TEXT NOT NULL,
+    source TEXT NOT NULL,
+    language_codes_json TEXT DEFAULT '[]' NOT NULL,
+    model TEXT,
+    transcript_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS transcripts_item_id_unique ON transcripts (item_id)",
+  "CREATE INDEX IF NOT EXISTS transcripts_hash_idx ON transcripts (transcript_hash)",
   `CREATE TABLE IF NOT EXISTS chat_threads (
     id TEXT PRIMARY KEY NOT NULL,
     item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,

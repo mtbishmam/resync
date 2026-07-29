@@ -15,6 +15,13 @@
       "when": 1785324101721,
       "tag": "0001_overjoyed_energizer",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785325516721,
+      "tag": "0002_tidy_king_cobra",
+      "breakpoints": true
     }
   ]
 }

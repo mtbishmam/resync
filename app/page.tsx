@@ -21,6 +21,21 @@ type ValueFactor = {
   max: number;
 };
 
+type AnalysisApiResult = {
+  status?: string;
+  message?: string;
+  error?: string;
+  transcriptStatus?: TranscriptStatus;
+  analysisStatus?: AnalysisStatus;
+  analysis?: {
+    type?: ContentType;
+    topics?: Topic[];
+    value_score?: number;
+    value_reason?: string;
+    valueFactors?: ValueFactor[];
+  };
+};
+
 type Video = {
   id: string;
   youtubeId?: string;
@@ -361,9 +376,15 @@ export default function Home() {
   const [sidebarWidth, setSidebarWidth] = useState(228);
   const [cloudReady, setCloudReady] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>("connecting");
+  const [showTranscriptPaste, setShowTranscriptPaste] = useState(false);
+  const [transcriptText, setTranscriptText] = useState("");
+  const [transcriptBusy, setTranscriptBusy] = useState<
+    "paste" | "upload" | null
+  >(null);
   const metadataRefreshStarted = useRef(false);
   const cloudSyncStarted = useRef(false);
   const analysisStarted = useRef(new Set<string>());
+  const transcriptFileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     window.queueMicrotask(() => {
@@ -651,6 +672,29 @@ export default function Home() {
     }
   }
 
+  function applyAnalysisResult(id: string, result: AnalysisApiResult) {
+    if (result.status !== "complete" || !result.analysis) return false;
+    setVideos((current) =>
+      current.map((video) =>
+        video.id === id
+          ? {
+              ...video,
+              type: result.analysis?.type ?? video.type,
+              topics: Array.isArray(result.analysis?.topics)
+                ? result.analysis.topics
+                : video.topics,
+              valueScore: result.analysis?.value_score ?? video.valueScore,
+              valueReason: result.analysis?.value_reason ?? video.valueReason,
+              valueFactors: result.analysis?.valueFactors ?? video.valueFactors,
+              transcriptStatus: "available",
+              analysisStatus: "complete",
+            }
+          : video,
+      ),
+    );
+    return true;
+  }
+
   async function requestAnalysis(id: string) {
     if (analysisStarted.current.has(id)) return;
     analysisStarted.current.add(id);
@@ -660,20 +704,9 @@ export default function Home() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ itemId: id }),
       });
-      const result = (await response.json().catch(() => null)) as {
-        status?: string;
-        message?: string;
-        error?: string;
-        transcriptStatus?: TranscriptStatus;
-        analysisStatus?: AnalysisStatus;
-        analysis?: {
-          type?: ContentType;
-          topics?: Topic[];
-          value_score?: number;
-          value_reason?: string;
-          valueFactors?: ValueFactor[];
-        };
-      } | null;
+      const result = (await response
+        .json()
+        .catch(() => null)) as AnalysisApiResult | null;
 
       if (result?.status === "transcript_unavailable") {
         setVideos((current) =>
@@ -692,28 +725,10 @@ export default function Home() {
         return;
       }
 
-      if (!response.ok || result?.status !== "complete" || !result.analysis) {
+      if (!response.ok || !result || !applyAnalysisResult(id, result)) {
         throw new Error(result?.error ?? "Analysis failed");
       }
 
-      setVideos((current) =>
-        current.map((video) =>
-          video.id === id
-            ? {
-                ...video,
-                type: result.analysis?.type ?? video.type,
-                topics: Array.isArray(result.analysis?.topics)
-                  ? result.analysis.topics
-                  : video.topics,
-                valueScore: result.analysis?.value_score ?? video.valueScore,
-                valueReason: result.analysis?.value_reason ?? video.valueReason,
-                valueFactors: result.analysis?.valueFactors ?? video.valueFactors,
-                transcriptStatus: "available",
-                analysisStatus: "complete",
-              }
-            : video,
-        ),
-      );
       setNotice("AI selected the content type and topics from the transcript.");
       setNoticeTone("success");
     } catch {
@@ -724,6 +739,84 @@ export default function Home() {
       );
       setNotice("Transcript analysis is temporarily unavailable.");
       setNoticeTone("error");
+    }
+  }
+
+  async function analyzePastedTranscript(id: string) {
+    const transcript = transcriptText.trim();
+    if (transcript.length < 40) {
+      setNotice("Paste a fuller transcript before running the analysis.");
+      setNoticeTone("error");
+      return;
+    }
+    setTranscriptBusy("paste");
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          itemId: id,
+          transcript,
+          source: "manual-paste",
+        }),
+      });
+      const result = (await response
+        .json()
+        .catch(() => null)) as AnalysisApiResult | null;
+      if (!response.ok || !result || !applyAnalysisResult(id, result)) {
+        throw new Error(result?.error ?? "Transcript analysis failed.");
+      }
+      setShowTranscriptPaste(false);
+      setTranscriptText("");
+      setNotice("Transcript saved to D1 and analyzed.");
+      setNoticeTone("success");
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Transcript analysis is temporarily unavailable.",
+      );
+      setNoticeTone("error");
+    } finally {
+      setTranscriptBusy(null);
+    }
+  }
+
+  async function transcribeFile(id: string, file: File) {
+    if (file.size > 25 * 1024 * 1024) {
+      setNotice("Choose a file that is 25 MB or smaller.");
+      setNoticeTone("error");
+      return;
+    }
+    setTranscriptBusy("upload");
+    try {
+      const form = new FormData();
+      form.set("itemId", id);
+      form.set("file", file);
+      const response = await fetch("/api/transcribe", {
+        method: "POST",
+        body: form,
+      });
+      const result = (await response
+        .json()
+        .catch(() => null)) as AnalysisApiResult | null;
+      if (!response.ok || !result || !applyAnalysisResult(id, result)) {
+        throw new Error(result?.error ?? "Transcription failed.");
+      }
+      setNotice("Bangla/English transcript generated, saved, and analyzed.");
+      setNoticeTone("success");
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Transcription is temporarily unavailable.",
+      );
+      setNoticeTone("error");
+    } finally {
+      setTranscriptBusy(null);
+      if (transcriptFileInput.current) {
+        transcriptFileInput.current.value = "";
+      }
     }
   }
 
@@ -849,6 +942,8 @@ export default function Home() {
 
   function openVideo(id: string) {
     setOpenMenuId(null);
+    setShowTranscriptPaste(false);
+    setTranscriptText("");
     setSelectedId(id);
   }
 
@@ -1496,11 +1591,75 @@ export default function Home() {
                   </div>
                 ) : (
                   <div className="analysis-empty">
-                    {selectedVideo.analysisStatus === "unavailable"
-                      ? "No transcript is available through the official YouTube API. ReSync did not call OpenAI."
-                      : selectedVideo.analysisStatus === "error"
-                        ? "Analysis could not run. Check the transcript permission and OpenAI key."
-                        : "GPT-5.4 mini will select Type and Topics and score the transcript here."}
+                    <p>
+                      {selectedVideo.analysisStatus === "unavailable"
+                        ? "YouTube could not provide this transcript. Upload the recording or paste the full transcript."
+                        : selectedVideo.analysisStatus === "error"
+                          ? "Analysis could not run. You can retry with a pasted transcript or recording."
+                          : "GPT-5.4 mini will select Type and Topics and score the transcript here."}
+                    </p>
+                    {selectedVideo.type === "Watch" ? (
+                      <div className="transcript-actions">
+                        <input
+                          ref={transcriptFileInput}
+                          className="transcript-file-input"
+                          type="file"
+                          accept=".mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm,audio/*,video/mp4,video/webm"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) {
+                              void transcribeFile(selectedVideo.id, file);
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          disabled={transcriptBusy !== null}
+                          onClick={() => transcriptFileInput.current?.click()}
+                        >
+                          {transcriptBusy === "upload"
+                            ? "Transcribing…"
+                            : "Generate transcript"}
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={transcriptBusy !== null}
+                          onClick={() =>
+                            setShowTranscriptPaste((current) => !current)
+                          }
+                        >
+                          Paste transcript
+                        </button>
+                        <span>
+                          MP3, MP4, M4A, WAV or WEBM · 25 MB max · Bengali +
+                          English
+                        </span>
+                      </div>
+                    ) : null}
+                    {showTranscriptPaste ? (
+                      <div className="transcript-paste">
+                        <textarea
+                          aria-label="Full transcript"
+                          value={transcriptText}
+                          onChange={(event) =>
+                            setTranscriptText(event.target.value)
+                          }
+                          placeholder="Paste the full transcript here. The extension can send this same text directly."
+                        />
+                        <button
+                          type="button"
+                          disabled={transcriptBusy !== null}
+                          onClick={() =>
+                            void analyzePastedTranscript(selectedVideo.id)
+                          }
+                        >
+                          {transcriptBusy === "paste"
+                            ? "Analyzing…"
+                            : "Save and analyze"}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </section>

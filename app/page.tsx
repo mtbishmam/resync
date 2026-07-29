@@ -1,6 +1,13 @@
 "use client";
 
-import { CSSProperties, FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  CSSProperties,
+  FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 type Status = "feed" | "inbox" | "queued" | "watched";
 type Topic = "Unsorted" | "AI" | "Development" | "Business" | "CP";
@@ -255,6 +262,7 @@ export default function Home() {
   const [lastRemoved, setLastRemoved] = useState<Video | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [sidebarWidth, setSidebarWidth] = useState(228);
+  const metadataRefreshStarted = useRef(false);
 
   useEffect(() => {
     window.queueMicrotask(() => {
@@ -305,6 +313,16 @@ export default function Home() {
       window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
     }
   }, [ready, sidebarWidth]);
+
+  useEffect(() => {
+    if (!ready || metadataRefreshStarted.current) return;
+    metadataRefreshStarted.current = true;
+    videos
+      .filter((video) => video.youtubeId && !video.metadataComplete)
+      .forEach((video) => {
+        void enrichMetadata(video.id, video.url, true);
+      });
+  }, [ready, videos]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -362,7 +380,7 @@ export default function Home() {
     0,
   );
 
-  async function enrichMetadata(id: string, videoUrl: string) {
+  async function enrichMetadata(id: string, videoUrl: string, quiet = false) {
     try {
       const response = await fetch(`/api/youtube?url=${encodeURIComponent(videoUrl)}`);
       if (!response.ok) {
@@ -372,8 +390,10 @@ export default function Home() {
         } | null;
         if (response.status === 400 || response.status === 404) {
           setVideos((current) => current.filter((video) => video.id !== id));
-          setNotice(problem?.error ?? "That YouTube link is invalid.");
-          setNoticeTone("error");
+          if (!quiet) {
+            setNotice(problem?.error ?? "That YouTube link is invalid.");
+            setNoticeTone("error");
+          }
           return;
         }
         throw new Error("Metadata request failed");
@@ -409,12 +429,14 @@ export default function Home() {
             : video,
         ),
       );
-      setNotice(
-        metadata.metadataComplete
-          ? `Saved to Inbox with full metadata. ${COOLDOWN_MINUTES}-minute cooldown started.`
-          : `Saved to Inbox. Add the YouTube API key to fetch duration and full metadata.`,
-      );
-      setNoticeTone(metadata.metadataComplete ? "success" : "info");
+      if (!quiet) {
+        setNotice(
+          metadata.metadataComplete
+            ? `Saved to Inbox with full metadata. ${COOLDOWN_MINUTES}-minute cooldown started.`
+            : `Saved to Inbox. Add the YouTube API key to fetch duration and full metadata.`,
+        );
+        setNoticeTone(metadata.metadataComplete ? "success" : "info");
+      }
     } catch {
       setVideos((current) =>
         current.map((video) =>
@@ -423,8 +445,10 @@ export default function Home() {
             : video,
         ),
       );
-      setNotice("Saved to Inbox, but YouTube metadata is temporarily unavailable.");
-      setNoticeTone("error");
+      if (!quiet) {
+        setNotice("Saved to Inbox, but YouTube metadata is temporarily unavailable.");
+        setNoticeTone("error");
+      }
     }
   }
 

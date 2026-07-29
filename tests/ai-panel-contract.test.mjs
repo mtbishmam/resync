@@ -72,8 +72,29 @@ test("assistant text is normalized to the same regular style as the AI summary",
   );
   assert.match(
     styles,
-    /\.chat-message\.assistant \.markdown \*[\s\S]*?font-weight:\s*400 !important/,
+    /\.chat-message\.assistant \.markdown \*[\s\S]*?font-size:\s*14px !important[\s\S]*?font-weight:\s*400 !important/,
   );
+  assert.match(styles, /\.chat-message > span\s*\{[\s\S]*?font-size:\s*10px/);
+  assert.doesNotMatch(styles, /\.chat-message span\s*\{/);
   assert.match(styles, /\.chat-message\.assistant > span[\s\S]*?text-transform:\s*none/);
   assert.match(chatRoute, /Never write in all caps or use bold or italic emphasis/);
+});
+
+test("ReSync AI can search the live web and keeps citations clickable", async () => {
+  const chatRoute = await source("app/api/chat/route.ts");
+  const usage = await source("lib/ai-usage.ts");
+
+  assert.match(
+    chatRoute,
+    /tools:\s*\[\{ type: "web_search", search_context_size: "low" \}\]/,
+  );
+  assert.match(
+    chatRoute,
+    /tool_choice: shouldForceWebSearch\(message\) \? "required" : "auto"/,
+  );
+  assert.match(chatRoute, /annotation\.type !== "url_citation"/);
+  assert.match(chatRoute, /\[\$\{citation\.label\}\]\(\$\{citation\.url\}\)/);
+  assert.match(chatRoute, /item\.type === "web_search_call"/);
+  assert.match(chatRoute, /hasUnpricedTools: webSearched/);
+  assert.match(usage, /hasUnpricedTools \? null : estimateCostMicros/);
 });

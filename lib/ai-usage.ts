@@ -73,12 +73,14 @@ export function usageStatement(
     purpose,
     model,
     usage,
+    hasUnpricedTools = false,
     createdAt = Date.now(),
   }: {
     itemId: string;
     purpose: "analysis" | "chat" | "knowledge" | "transcription";
     model: string;
     usage: UsageNumbers;
+    hasUnpricedTools?: boolean;
     createdAt?: number;
   },
 ) {
@@ -100,7 +102,7 @@ export function usageStatement(
       usage.audioInputTokens,
       usage.outputTokens,
       usage.totalTokens,
-      estimateCostMicros(model, usage),
+      hasUnpricedTools ? null : estimateCostMicros(model, usage),
       createdAt,
     );
 }

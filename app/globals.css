@@ -2284,7 +2284,7 @@ button {
   opacity: 0.65;
 }
 
-.chat-message span {
+.chat-message > span {
   color: #90969b;
   font-size: 9px;
   font-weight: 750;
@@ -2636,7 +2636,7 @@ body {
 .ask-preview,
 .chat-space,
 .chat-message,
-.chat-message span,
+.chat-message > span,
 .ask-panel > p,
 .ask-input input {
   color: #000000;
@@ -2808,7 +2808,7 @@ body {
   color: #000000;
 }
 
-.chat-message span {
+.chat-message > span {
   font-size: 10px;
   font-weight: 600;
 }
@@ -2832,6 +2832,7 @@ body {
 .chat-message.assistant .markdown *,
 .chat-message.assistant .markdown strong,
 .chat-message.assistant .markdown em {
+  font-size: 14px !important;
   font-weight: 400 !important;
   letter-spacing: normal;
   text-transform: none;

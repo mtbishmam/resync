@@ -347,14 +347,25 @@ function normalizeAssistantMarkdown(content: string) {
       );
       if (!match?.[2]) return line;
       const [, prefix, rawText] = match;
-      const letters = rawText.match(/[A-Za-z]/g) ?? [];
+      const protectedLinks: string[] = [];
+      const textWithoutLinks = rawText.replace(
+        /\[[^\]]+\]\(https?:\/\/[^)\s]+\)/g,
+        (link) => {
+          protectedLinks.push(link);
+          return `RESYNCLINK${protectedLinks.length - 1}TOKEN`;
+        },
+      );
+      const letters =
+        textWithoutLinks
+          .replace(/RESYNCLINK\d+TOKEN/g, "")
+          .match(/[A-Za-z]/g) ?? [];
       const uppercaseLetters = letters.filter(
         (letter) => letter === letter.toUpperCase(),
       ).length;
       let text =
         letters.length >= 4 && uppercaseLetters / letters.length >= 0.55
-          ? rawText.toLowerCase()
-          : rawText;
+          ? textWithoutLinks.toLowerCase()
+          : textWithoutLinks;
 
       text = text
         .replace(/(^|[.!?]\s+)([a-z])/g, (_, boundary, letter: string) =>
@@ -372,7 +383,10 @@ function normalizeAssistantMarkdown(content: string) {
         .replace(/\bmastercard\b/gi, "Mastercard")
         .replace(/\byoutube\b/gi, "YouTube")
         .replace(/\bopenai\b/gi, "OpenAI")
-        .replace(/\bworld war i\b/gi, "World War I");
+        .replace(/\bworld war i\b/gi, "World War I")
+        .replace(/resynclink(\d+)token/gi, (_, index: string) =>
+          protectedLinks[Number(index)] ?? "",
+        );
 
       return `${prefix}${text}`;
     })

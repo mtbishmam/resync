@@ -17,29 +17,106 @@ type ChatRow = {
   created_at: number;
 };
 
+type UrlCitation = {
+  type?: unknown;
+  start_index?: unknown;
+  end_index?: unknown;
+  url?: unknown;
+  title?: unknown;
+};
+
 function noStoreJson(value: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
   headers.set("cache-control", "no-store");
   return Response.json(value, { ...init, headers });
 }
 
-function responseText(value: unknown) {
+function markdownSafeUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.toString().replace(/\(/g, "%28").replace(/\)/g, "%29");
+  } catch {
+    return null;
+  }
+}
+
+function citationLabel(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return "Source";
+  }
+}
+
+function linkCitations(text: string, annotations: UrlCitation[]) {
+  const citations = annotations
+    .flatMap((annotation) => {
+      if (
+        annotation.type !== "url_citation" ||
+        typeof annotation.end_index !== "number" ||
+        typeof annotation.url !== "string"
+      ) {
+        return [];
+      }
+      const url = markdownSafeUrl(annotation.url);
+      const endIndex = Math.min(text.length, Math.max(0, annotation.end_index));
+      if (!url || !endIndex) return [];
+      return [{ endIndex, url, label: citationLabel(annotation.url) }];
+    })
+    .filter(
+      (citation, index, all) =>
+        all.findIndex(
+          (candidate) =>
+            candidate.endIndex === citation.endIndex &&
+            candidate.url === citation.url,
+        ) === index,
+    )
+    .sort((left, right) => right.endIndex - left.endIndex);
+
+  let linked = text;
+  for (const citation of citations) {
+    linked = `${linked.slice(0, citation.endIndex)} [${citation.label}](${citation.url})${linked.slice(citation.endIndex)}`;
+  }
+  return linked;
+}
+
+function responseAnswer(value: unknown) {
   if (!value || typeof value !== "object") return null;
   const response = value as {
     output_text?: unknown;
     output?: Array<{
-      content?: Array<{ type?: string; text?: unknown }>;
+      type?: unknown;
+      content?: Array<{
+        type?: unknown;
+        text?: unknown;
+        annotations?: UrlCitation[];
+      }>;
     }>;
   };
-  if (typeof response.output_text === "string") return response.output_text;
+  const parts: string[] = [];
   for (const item of response.output ?? []) {
     for (const content of item.content ?? []) {
       if (content.type === "output_text" && typeof content.text === "string") {
-        return content.text;
+        parts.push(linkCitations(content.text, content.annotations ?? []));
       }
     }
   }
+  if (parts.length) return parts.join("\n\n");
+  if (typeof response.output_text === "string") return response.output_text;
   return null;
+}
+
+function usedWebSearch(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const output = (value as { output?: Array<{ type?: unknown }> }).output;
+  return output?.some((item) => item.type === "web_search_call") ?? false;
+}
+
+function shouldForceWebSearch(message: string) {
+  return /\b(?:search|browse|look\s+(?:it\s+)?up|find\s+out\s+online|latest|today|current(?:ly)?|recent|up-to-date|fact[- ]?check|verify\s+(?:online|on\s+the\s+web|with\s+sources))\b/i.test(
+    message,
+  );
 }
 
 function publicMessage(row: ChatRow) {
@@ -169,11 +246,13 @@ export async function POST(request: Request) {
         model: TEXT_MODEL,
         store: false,
         reasoning: { effort: "low" },
+        tools: [{ type: "web_search", search_context_size: "low" }],
+        tool_choice: shouldForceWebSearch(message) ? "required" : "auto",
         input: [
           {
             role: "system",
             content:
-              "You are ReSync's grounded learning assistant. Answer from the captured source, saved analysis, and working notes. If the source does not contain the answer, say so plainly instead of guessing. For video transcripts, cite useful timestamps when they appear. Be concise, practical, and comfortable answering in Bengali or English to match the user. Use ordinary sentence case and clean Markdown. Never write in all caps or use bold or italic emphasis. Prefer short plain paragraphs; use real bullet or numbered lists only when they materially improve readability.",
+              "You are ReSync's grounded learning assistant. Start with the captured source, saved analysis, and working notes. You also have live web search: use it when the user explicitly asks to search, browse, look something up, verify something online, or needs current information. Never claim that you cannot search the web. Clearly distinguish transcript-backed claims from web-backed facts, and do not present one as the other. For video transcripts, cite useful timestamps when they appear. Be concise, practical, and comfortable answering in Bengali or English to match the user. Use ordinary sentence case and clean Markdown. Never write in all caps or use bold or italic emphasis. Prefer short plain paragraphs; use real bullet or numbered lists only when they materially improve readability.",
           },
           {
             role: "user",
@@ -200,8 +279,9 @@ ${sourceText || "No transcript or article text has been captured. Disclose this 
       throw new Error(`OpenAI chat failed (${response.status}).`);
     }
     const payload = (await response.json()) as unknown;
-    const answer = responseText(payload)?.trim();
+    const answer = responseAnswer(payload)?.trim();
     if (!answer) throw new Error("OpenAI returned an empty answer.");
+    const webSearched = usedWebSearch(payload);
 
     const now = Date.now();
     const threadId = `chat:${item.id}`;
@@ -256,6 +336,7 @@ ${sourceText || "No transcript or article text has been captured. Disclose this 
         purpose: "chat",
         model: TEXT_MODEL,
         usage: usageFromPayload(payload),
+        hasUnpricedTools: webSearched,
         createdAt: now,
       }),
     ]);
@@ -264,6 +345,7 @@ ${sourceText || "No transcript or article text has been captured. Disclose this 
       messages: [publicMessage(userMessage), publicMessage(assistantMessage)],
       model: TEXT_MODEL,
       grounded: Boolean(sourceText),
+      webSearched,
     });
   } catch {
     return noStoreJson(

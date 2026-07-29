@@ -142,6 +142,8 @@ Initial content categories include:
 - The cooldown is 5 minutes during MVP testing and 24 hours in the final
   version.
 - Queue contains only videos I explicitly intend to watch.
+- Videos and notes sync through D1 so the same library is available on desktop
+  and mobile. Browser storage remains a fast local cache.
 - Recommendations should be ranked by expected value to me, not simply
   popularity or recency.
 - The library should show why each video was selected.

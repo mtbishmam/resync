@@ -14,6 +14,10 @@ Without `YOUTUBE_API_KEY`, YouTube oEmbed supplies only title, channel, and
 thumbnail. Configure the key server-side to also retrieve duration, description,
 publish date, tags, caption availability, and embeddability.
 
+Videos and notes use Cloudflare D1 as their durable source of truth. Browser
+storage remains as an instant local cache and automatically migrates into D1
+the first time the updated app loads.
+
 ## Run locally
 
 Requires Node.js `>=22.13.0`.
@@ -26,6 +30,6 @@ npm run dev
 
 Use `npm run build` to verify the production build.
 
-Videos and notes still use browser storage. The next persistence phase will use
-Cloudflare D1 through Drizzle; the current D1 schema and hosted binding are
-intentionally empty.
+`OPENAI_API_KEY` is reserved for the upcoming RePlay AI analysis and chat
+backend. Keep both API keys server-side in `.env.local` and in hosted secret
+storage; never expose them to browser code.

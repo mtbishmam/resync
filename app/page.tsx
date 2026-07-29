@@ -11,6 +11,7 @@ import {
 
 type Status = "feed" | "inbox" | "queued" | "watched";
 type Topic = "Unsorted" | "AI" | "Development" | "Business" | "CP";
+type CloudStatus = "connecting" | "syncing" | "synced" | "offline";
 type ValueFactor = {
   label: string;
   points: number;
@@ -46,6 +47,8 @@ const STORAGE_KEY = "resync-replay-videos";
 const LEGACY_STORAGE_KEY = "later-videos";
 const NOTES_KEY = "resync-replay-notes";
 const SIDEBAR_WIDTH_KEY = "resync-sidebar-width";
+const CLOUD_SYNCED_KEY = "resync-cloud-synced";
+const CLOUD_DIRTY_KEY = "resync-cloud-dirty";
 // Five minutes keeps the cooldown easy to test. The final ReSync release uses 24 hours.
 const COOLDOWN_MINUTES = 5;
 
@@ -251,6 +254,53 @@ function normalizeVideo(video: Partial<Video>): Video {
   };
 }
 
+function readLocalVideos() {
+  const saved =
+    window.localStorage.getItem(STORAGE_KEY) ??
+    window.localStorage.getItem(LEGACY_STORAGE_KEY);
+  if (!saved) return starterVideos;
+  try {
+    return (JSON.parse(saved) as Partial<Video>[]).map(normalizeVideo);
+  } catch {
+    return starterVideos;
+  }
+}
+
+function readLocalNotes() {
+  const saved = window.localStorage.getItem(NOTES_KEY);
+  if (!saved) return {};
+  try {
+    return JSON.parse(saved) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function mergeVideoLibraries(local: Video[], remote: Partial<Video>[]) {
+  const merged = new Map<string, Video>();
+  local.map(normalizeVideo).forEach((video) => {
+    merged.set(video.youtubeId ?? video.id, video);
+  });
+  remote.map(normalizeVideo).forEach((video) => {
+    merged.set(video.youtubeId ?? video.id, video);
+  });
+  return Array.from(merged.values());
+}
+
+async function saveCloudLibrary(
+  videos: Video[],
+  notes: Record<string, string>,
+  signal?: AbortSignal,
+) {
+  const response = await fetch("/api/library", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ videos, notes }),
+    signal,
+  });
+  if (!response.ok) throw new Error("Cloud save failed");
+}
+
 export default function Home() {
   const [videos, setVideos] = useState<Video[]>(starterVideos);
   const [ready, setReady] = useState(false);
@@ -269,28 +319,15 @@ export default function Home() {
   const [lastRemoved, setLastRemoved] = useState<Video | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [sidebarWidth, setSidebarWidth] = useState(228);
+  const [cloudReady, setCloudReady] = useState(false);
+  const [cloudStatus, setCloudStatus] = useState<CloudStatus>("connecting");
   const metadataRefreshStarted = useRef(false);
+  const cloudSyncStarted = useRef(false);
 
   useEffect(() => {
     window.queueMicrotask(() => {
-      const saved =
-        window.localStorage.getItem(STORAGE_KEY) ??
-        window.localStorage.getItem(LEGACY_STORAGE_KEY);
-      if (saved) {
-        try {
-          setVideos((JSON.parse(saved) as Partial<Video>[]).map(normalizeVideo));
-        } catch {
-          setVideos(starterVideos);
-        }
-      }
-      const savedNotes = window.localStorage.getItem(NOTES_KEY);
-      if (savedNotes) {
-        try {
-          setNotes(JSON.parse(savedNotes));
-        } catch {
-          setNotes({});
-        }
-      }
+      setVideos(readLocalVideos());
+      setNotes(readLocalNotes());
       const savedSidebarWidth = Number(
         window.localStorage.getItem(SIDEBAR_WIDTH_KEY),
       );
@@ -314,6 +351,85 @@ export default function Home() {
   useEffect(() => {
     if (ready) window.localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
   }, [notes, ready]);
+
+  useEffect(() => {
+    if (!ready || cloudSyncStarted.current) return;
+    cloudSyncStarted.current = true;
+    const controller = new AbortController();
+
+    async function hydrateCloudLibrary() {
+      setCloudStatus("connecting");
+      try {
+        const response = await fetch("/api/library", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Cloud load failed");
+        const remote = (await response.json()) as {
+          exists?: boolean;
+          videos?: Partial<Video>[];
+          notes?: Record<string, string>;
+        };
+        const localVideos = readLocalVideos();
+        const localNotes = readLocalNotes();
+        const wasSynced =
+          window.localStorage.getItem(CLOUD_SYNCED_KEY) === "true";
+        const hasUnsavedChanges =
+          window.localStorage.getItem(CLOUD_DIRTY_KEY) === "true";
+
+        let nextVideos = localVideos;
+        let nextNotes = localNotes;
+        if (remote.exists) {
+          const remoteVideos = Array.isArray(remote.videos) ? remote.videos : [];
+          const remoteNotes =
+            remote.notes && typeof remote.notes === "object" ? remote.notes : {};
+          if (wasSynced && !hasUnsavedChanges) {
+            nextVideos = remoteVideos.map(normalizeVideo);
+            nextNotes = remoteNotes;
+          } else {
+            nextVideos = mergeVideoLibraries(localVideos, remoteVideos);
+            nextNotes = { ...localNotes, ...remoteNotes };
+          }
+        }
+
+        setVideos(nextVideos);
+        setNotes(nextNotes);
+        window.localStorage.setItem(CLOUD_SYNCED_KEY, "true");
+        setCloudReady(true);
+        setCloudStatus("synced");
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") {
+          setCloudStatus("offline");
+        }
+      }
+    }
+
+    void hydrateCloudLibrary();
+    return () => controller.abort();
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready || !cloudReady) return;
+    window.localStorage.setItem(CLOUD_DIRTY_KEY, "true");
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setCloudStatus("syncing");
+      void saveCloudLibrary(videos, notes, controller.signal)
+        .then(() => {
+          window.localStorage.removeItem(CLOUD_DIRTY_KEY);
+          setCloudStatus("synced");
+        })
+        .catch((error) => {
+          if ((error as Error).name !== "AbortError") {
+            setCloudStatus("offline");
+          }
+        });
+    }, 700);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [cloudReady, notes, ready, videos]);
 
   useEffect(() => {
     if (ready) {
@@ -624,13 +740,21 @@ export default function Home() {
 
         <div className="sidebar-footer">
           <div className="storage-line">
-            <span>Saved on this device</span>
-            <span>{videos.length} videos</span>
+            <span>Cloud library</span>
+            <span>
+              {cloudStatus === "synced"
+                ? "Synced"
+                : cloudStatus === "offline"
+                  ? "Offline"
+                  : cloudStatus === "syncing"
+                    ? "Saving…"
+                    : "Connecting…"}
+            </span>
           </div>
           <div className="storage-track">
             <span style={{ width: `${Math.min(100, videos.length * 7)}%` }} />
           </div>
-          <p>Videos and notes are currently saved in this browser.</p>
+          <p>{videos.length} videos · available across your devices.</p>
         </div>
         <div
           className="sidebar-resizer"
@@ -1044,7 +1168,7 @@ export default function Home() {
               <section className="notes-panel">
                 <div className="section-title">
                   <h3>Working notes</h3>
-                  <span>saved in this browser</span>
+                  <span>{cloudStatus === "synced" ? "cloud synced" : "saved locally"}</span>
                 </div>
                 <textarea
                   value={notes[selectedVideo.id] ?? ""}

@@ -235,7 +235,10 @@ function formatDuration(seconds?: number, minutes?: number) {
 
 function normalizeVideo(video: Partial<Video> & { topic?: string }): Video {
   const starterMatch = starterVideos.find((item) => item.id === video.id);
-  const addedAt = video.addedAt ?? Date.now();
+  const addedAt =
+    typeof video.addedAt === "number" && video.addedAt > 0
+      ? video.addedAt
+      : Date.now();
   const status =
     starterMatch?.status ??
     (["feed", "inbox", "queued", "watched"].includes(video.status ?? "")
@@ -341,6 +344,7 @@ export default function Home() {
   const [sort, setSort] = useState("value");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [lastRemoved, setLastRemoved] = useState<Video | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [sidebarWidth, setSidebarWidth] = useState(228);
@@ -466,7 +470,12 @@ export default function Home() {
     if (!ready || metadataRefreshStarted.current) return;
     metadataRefreshStarted.current = true;
     videos
-      .filter((video) => video.youtubeId && !video.metadataComplete)
+      .filter(
+        (video) =>
+          video.type === "Watch" &&
+          video.youtubeId &&
+          (!video.metadataComplete || !video.durationSeconds),
+      )
       .forEach((video) => {
         void enrichMetadata(video.id, video.url, true);
       });
@@ -687,6 +696,7 @@ export default function Home() {
   }
 
   function changeStatus(id: string, status: Status) {
+    setOpenMenuId(null);
     setVideos((current) =>
       current.map((video) =>
         video.id === id
@@ -697,6 +707,7 @@ export default function Home() {
   }
 
   function addToInbox(id: string) {
+    setOpenMenuId(null);
     const addedAt = now;
     setVideos((current) =>
       current.map((video) =>
@@ -716,6 +727,7 @@ export default function Home() {
   }
 
   function moveToQueue(id: string) {
+    setOpenMenuId(null);
     setVideos((current) =>
       current.map((video) =>
         video.id === id && video.cooldownUntil <= now
@@ -732,6 +744,11 @@ export default function Home() {
     setVideos((current) =>
       current.map((video) => (video.id === id ? { ...video, ...changes } : video)),
     );
+  }
+
+  function openVideo(id: string) {
+    setOpenMenuId(null);
+    setSelectedId(id);
   }
 
   function toggleTopic(id: string, topic: Topic) {
@@ -767,6 +784,7 @@ export default function Home() {
   }
 
   function removeVideo(video: Video) {
+    setOpenMenuId(null);
     setVideos((current) => current.filter((item) => item.id !== video.id));
     setLastRemoved(video);
     if (selectedId === video.id) setSelectedId(null);
@@ -802,8 +820,8 @@ export default function Home() {
             <button
               className={
                 activeType === type && activeStatus === "feed"
-                  ? `nav-item content-tab ${type === "Read" ? "nested" : ""} active`
-                  : `nav-item content-tab ${type === "Read" ? "nested" : ""}`
+                  ? "nav-item content-tab active"
+                  : "nav-item content-tab"
               }
               key={type}
               onClick={() => {
@@ -1032,7 +1050,7 @@ export default function Home() {
               <article className="video-card" key={video.id}>
                 <button
                   className={`video-thumb ${video.accent}`}
-                  onClick={() => setSelectedId(video.id)}
+                  onClick={() => openVideo(video.id)}
                   aria-label={`Open ${video.title} in ${
                     video.type === "Watch" ? "RePlay" : "ReRead"
                   }`}
@@ -1088,7 +1106,7 @@ export default function Home() {
                       {relativeTime(video.addedAt, now || video.addedAt + 60000)}
                     </span>
                   </div>
-                  <button className="title-button" onClick={() => setSelectedId(video.id)}>
+                  <button className="title-button" onClick={() => openVideo(video.id)}>
                     <h2>{video.title}</h2>
                   </button>
                   <p className="channel">{video.channel}</p>
@@ -1113,7 +1131,7 @@ export default function Home() {
                       </button>
                     ) : video.status === "inbox" && isCooling ? (
                       <button className="cooling-action" disabled>
-                        Cooling · {countdown(video.cooldownUntil, now)}
+                        Move to Queue · {countdown(video.cooldownUntil, now)}
                       </button>
                     ) : video.status === "inbox" ? (
                       <button
@@ -1122,34 +1140,63 @@ export default function Home() {
                       >
                         Move to Queue
                       </button>
-                    ) : video.status === "watched" ? (
+                    ) : video.status === "queued" ? (
                       <button
-                        className="secondary-action"
-                        onClick={() => changeStatus(video.id, "queued")}
-                      >
-                        Finished ✓
-                      </button>
-                    ) : (
-                      <button className="secondary-action" disabled>
-                        In Queue
-                      </button>
-                    )}
-                    {canWatch ? (
-                      <button
-                        className="icon-action"
-                        aria-label={`Mark ${video.title} finished`}
+                        className="primary-action"
                         onClick={() => changeStatus(video.id, "watched")}
                       >
-                        ✓
+                        Move to Finished
+                      </button>
+                    ) : video.status === "watched" ? (
+                      <button
+                        className="primary-action"
+                        onClick={() => changeStatus(video.id, "queued")}
+                      >
+                        Move to Queue
                       </button>
                     ) : null}
-                    <button
-                      className="icon-action remove"
-                      aria-label={`Remove ${video.title}`}
-                      onClick={() => removeVideo(video)}
-                    >
-                      ×
-                    </button>
+                    <div className="overflow-menu-wrap">
+                      <button
+                        className="icon-action overflow-trigger"
+                        aria-label={`More actions for ${video.title}`}
+                        aria-haspopup="menu"
+                        aria-expanded={openMenuId === video.id}
+                        onClick={() =>
+                          setOpenMenuId((current) =>
+                            current === video.id ? null : video.id,
+                          )
+                        }
+                      >
+                        •••
+                      </button>
+                      {openMenuId === video.id ? (
+                        <div className="card-overflow-menu" role="menu">
+                          {video.status === "inbox" ? (
+                            <button
+                              role="menuitem"
+                              onClick={() => changeStatus(video.id, "watched")}
+                            >
+                              Move to Finished
+                            </button>
+                          ) : video.status === "queued" ||
+                            video.status === "watched" ? (
+                            <button
+                              role="menuitem"
+                              onClick={() => addToInbox(video.id)}
+                            >
+                              Move to Inbox
+                            </button>
+                          ) : null}
+                          <button
+                            className="danger"
+                            role="menuitem"
+                            onClick={() => removeVideo(video)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               </article>
@@ -1410,6 +1457,13 @@ export default function Home() {
                     notes into actions.
                   </p>
                 </div>
+                <div className="chat-space">
+                  <p>
+                    Your conversation about this{" "}
+                    {selectedVideo.type === "Watch" ? "video" : "article"} will
+                    appear here.
+                  </p>
+                </div>
                 <div className="ask-input">
                   <input
                     aria-label="Ask ReSync AI"
@@ -1422,10 +1476,6 @@ export default function Home() {
                 </div>
                 <p>Chat activates when the OpenAI backend is connected.</p>
               </section>
-
-              <button className="modal-remove" onClick={() => removeVideo(selectedVideo)}>
-                Remove from {selectedVideo.type === "Watch" ? "RePlay" : "ReRead"}
-              </button>
             </aside>
           </section>
         </div>

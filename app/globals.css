@@ -142,11 +142,6 @@ button {
   font-weight: 690;
 }
 
-.nav-item.content-tab.nested {
-  margin-left: 14px;
-  width: calc(100% - 14px);
-}
-
 .nav-count {
   min-width: 25px;
   padding: 2px 7px;
@@ -765,7 +760,6 @@ button {
 }
 
 .primary-action,
-.secondary-action,
 .icon-action {
   border: 0;
   border-radius: 8px;
@@ -774,8 +768,7 @@ button {
   cursor: pointer;
 }
 
-.primary-action,
-.secondary-action {
+.primary-action {
   flex: 1;
   padding: 9px 11px;
 }
@@ -789,11 +782,6 @@ button {
   background: #11151a;
 }
 
-.secondary-action {
-  background: #edf5f0;
-  color: #277951;
-}
-
 .icon-action {
   width: 34px;
   border: 1px solid #e5e6e2;
@@ -803,6 +791,52 @@ button {
 
 .icon-action:hover {
   color: #277951;
+}
+
+.overflow-menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.overflow-trigger {
+  height: 100%;
+  min-height: 34px;
+  letter-spacing: 0.08em;
+}
+
+.card-overflow-menu {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 6px);
+  display: grid;
+  min-width: 142px;
+  padding: 5px;
+  border: 1px solid #e1e2de;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(24, 28, 33, 0.14);
+}
+
+.card-overflow-menu button {
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #555d65;
+  font-size: 10px;
+  font-weight: 620;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-overflow-menu button:hover {
+  background: #f3f3f0;
+  color: #242a30;
+}
+
+.card-overflow-menu button.danger {
+  color: #b34e48;
 }
 
 .video-library.list {
@@ -1557,6 +1591,10 @@ button {
 }
 
 .ask-panel {
+  display: flex;
+  min-height: 300px;
+  flex: 1 0 300px;
+  flex-direction: column;
   padding: 14px;
 }
 
@@ -1579,9 +1617,27 @@ button {
   margin: 0;
 }
 
+.chat-space {
+  display: grid;
+  min-height: 150px;
+  flex: 1;
+  place-items: center;
+  padding: 18px;
+  color: #afb3b7;
+  font-size: 9px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.chat-space p {
+  max-width: 190px;
+  margin: 0;
+}
+
 .ask-input {
   display: flex;
   gap: 6px;
+  margin-top: auto;
 }
 
 .ask-input input {
@@ -1607,22 +1663,6 @@ button {
   margin-top: 7px;
   color: #a2a7ab;
   font-size: 8px;
-}
-
-.modal-remove {
-  margin-top: auto;
-  padding: 9px;
-  border: 1px solid #ead6d3;
-  border-radius: 8px;
-  background: transparent;
-  color: #b3534d;
-  font-size: 9px;
-  font-weight: 680;
-  cursor: pointer;
-}
-
-.modal-remove:hover {
-  background: #fff2f0;
 }
 
 @media (min-width: 1500px) {

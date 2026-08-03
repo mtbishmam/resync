@@ -33,9 +33,15 @@ export async function generateMetadata(): Promise<Metadata> {
     title,
     description,
     icons: {
-      icon: [{ url: "/resync-icon.svg", type: "image/svg+xml" }],
+      icon: [
+        { url: "/resync-icon.svg", type: "image/svg+xml" },
+        { url: "/downloads/extension/icons/icon32.png", type: "image/png", sizes: "32x32" },
+        { url: "/downloads/extension/icons/icon128.png", type: "image/png", sizes: "128x128" },
+      ],
       shortcut: "/resync-icon.svg",
+      apple: [{ url: "/downloads/extension/icons/icon128.png", sizes: "128x128" }],
     },
+    manifest: "/manifest.webmanifest",
     openGraph: {
       title,
       description,

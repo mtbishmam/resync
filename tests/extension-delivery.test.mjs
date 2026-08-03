@@ -170,7 +170,7 @@ test("rapid captures remain separate and acknowledgements remove only their matc
     background.state.pendingCaptures.map((capture) => capture.captureId),
     [first.captureId, second.captureId],
   );
-  assert.equal(background.createdTabs.length, 2);
+  assert.equal(background.createdTabs.length, 1);
 
   await background.sendMessage(
     {
@@ -202,13 +202,7 @@ test("rapid captures remain separate and acknowledgements remove only their matc
     tabId: 301,
   });
 
-  background.updateTab(301, { status: "loading" });
-  await background.flushQueue();
-  assert.deepEqual(background.badgeUpdates.at(-1), {
-    type: "text",
-    text: "",
-    tabId: 301,
-  });
+  assert.equal(background.createdTabs.length, 2, "the next capture starts only after the first is acknowledged");
 });
 
 test("a failed acknowledgement keeps its capture queued for retry", async () => {

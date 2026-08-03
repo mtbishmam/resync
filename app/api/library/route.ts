@@ -10,6 +10,7 @@ import {
 } from "../../../db/library";
 import { TEXT_MODEL, TRANSCRIPTION_MODEL } from "../../../lib/model-config";
 import { sha256 } from "../../../lib/transcript-analysis";
+import { deleteItemAndSource } from "../../../lib/source-storage";
 
 const MAX_REQUEST_BYTES = 1_500_000;
 
@@ -203,8 +204,6 @@ export async function PUT(request: Request) {
     }
 
     const d1 = await ensureNormalizedLibrary();
-    const existing = await d1.prepare("SELECT id FROM items").all<{ id: string }>();
-    const incomingIds = new Set(items.map((item) => item.id));
     const updatedAt = Date.now();
     const statements = items.map((item) =>
       upsertItemStatement(d1, item, updatedAt),
@@ -214,13 +213,6 @@ export async function PUT(request: Request) {
       statements.push(
         upsertNoteStatement(d1, item.id, notes[item.id] ?? "", updatedAt),
       );
-    }
-    for (const item of existing.results ?? []) {
-      if (!incomingIds.has(item.id)) {
-        statements.push(
-          d1.prepare("DELETE FROM items WHERE id = ?1").bind(item.id),
-        );
-      }
     }
     statements.push(
       d1
@@ -257,5 +249,22 @@ export async function PUT(request: Request) {
       { error: "Cloud library is temporarily unavailable." },
       { status: 503 },
     );
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const itemId = new URL(request.url).searchParams.get("id")?.trim();
+    if (!itemId) {
+      return noStoreJson({ error: "A ReSync item ID is required." }, { status: 400 });
+    }
+    const d1 = await ensureNormalizedLibrary();
+    const deleted = await deleteItemAndSource({ d1, itemId });
+    if (!deleted) {
+      return noStoreJson({ error: "That item no longer exists." }, { status: 404 });
+    }
+    return noStoreJson({ deleted: true, itemId });
+  } catch {
+    return noStoreJson({ error: "ReSync could not delete this item." }, { status: 503 });
   }
 }

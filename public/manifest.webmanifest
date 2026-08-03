@@ -1,0 +1,12 @@
+{
+  "name": "ReSync",
+  "short_name": "ReSync",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#e5483f",
+  "icons": [
+    { "src": "/downloads/extension/icons/icon48.png", "sizes": "48x48", "type": "image/png" },
+    { "src": "/downloads/extension/icons/icon128.png", "sizes": "128x128", "type": "image/png" }
+  ]
+}

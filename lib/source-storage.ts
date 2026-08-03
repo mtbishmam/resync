@@ -299,6 +299,31 @@ export async function loadSourceDocument({
   return publicSource(row, legacyBody, "d1");
 }
 
+export async function deleteItemAndSource({
+  d1,
+  itemId,
+}: {
+  d1: D1Database;
+  itemId: string;
+}) {
+  const source = await d1
+    .prepare("SELECT object_key FROM source_documents WHERE item_id = ?1")
+    .bind(itemId)
+    .first<{ object_key: string | null }>();
+  if (source?.object_key) {
+    const shared = await d1
+      .prepare("SELECT 1 AS found FROM source_documents WHERE object_key = ?1 AND item_id <> ?2 LIMIT 1")
+      .bind(source.object_key, itemId)
+      .first<{ found: number }>();
+    if (!shared) {
+      const r2 = await getR2();
+      await r2.delete(source.object_key);
+    }
+  }
+  const result = await d1.prepare("DELETE FROM items WHERE id = ?1").bind(itemId).run();
+  return (result.meta?.changes ?? 0) > 0;
+}
+
 export async function migrateLegacySourceDocuments({
   d1,
   limit = 10,

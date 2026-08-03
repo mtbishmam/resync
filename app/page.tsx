@@ -10,7 +10,8 @@ import {
   useState,
 } from "react";
 
-type Status = "feed" | "inbox" | "queued" | "watched";
+type Status = "feed" | "inbox" | "queued" | "watched" | "archived";
+type LibraryView = Status | "history";
 type ContentType = "Watch" | "Read";
 type Topic = "AI" | "CP" | "Tech" | "Business";
 type CloudStatus = "connecting" | "syncing" | "synced" | "offline";
@@ -122,6 +123,8 @@ type Video = {
   valueFactors?: ValueFactor[];
   addedAt: number;
   cooldownUntil: number;
+  finishedAt?: number;
+  archivedAt?: number;
   progress: number;
   accent: string;
 };
@@ -138,108 +141,8 @@ const COOLDOWN_MINUTES = 5;
 const topicOptions: Topic[] = ["AI", "CP", "Tech", "Business"];
 const topics: Array<"All" | Topic> = ["All", ...topicOptions];
 
-const starterVideos: Video[] = [
-  {
-    id: "v-1",
-    url: "https://youtube.com/watch?v=ai-agents",
-    title: "Building AI agents that actually finish the job",
-    channel: "Matthew Berman",
-    durationMinutes: 18,
-    type: "Watch",
-    topics: ["AI"],
-    status: "feed",
-    valueScore: 94,
-    valueReason: "Directly useful for your AI app",
-    valueFactors: [
-      { label: "Goal relevance", points: 34, max: 35 },
-      { label: "Mentor fit", points: 15, max: 15 },
-      { label: "Actionability", points: 14, max: 15 },
-      { label: "Novelty", points: 9, max: 10 },
-      { label: "Information density", points: 9, max: 10 },
-      { label: "Time efficiency", points: 9, max: 10 },
-      { label: "Timeliness", points: 4, max: 5 },
-    ],
-    addedAt: Date.now() - 1000 * 60 * 26,
-    cooldownUntil: 0,
-    progress: 0,
-    accent: "violet",
-  },
-  {
-    id: "v-2",
-    url: "https://youtube.com/watch?v=fast-web-apps",
-    title: "Why your web app feels slow",
-    channel: "Theo",
-    durationMinutes: 24,
-    type: "Watch",
-    topics: ["Tech"],
-    status: "feed",
-    valueScore: 89,
-    valueReason: "High relevance to perceived speed",
-    valueFactors: [
-      { label: "Goal relevance", points: 33, max: 35 },
-      { label: "Mentor fit", points: 14, max: 15 },
-      { label: "Actionability", points: 14, max: 15 },
-      { label: "Novelty", points: 8, max: 10 },
-      { label: "Information density", points: 8, max: 10 },
-      { label: "Time efficiency", points: 8, max: 10 },
-      { label: "Timeliness", points: 4, max: 5 },
-    ],
-    addedAt: Date.now() - 1000 * 60 * 60 * 3,
-    cooldownUntil: 0,
-    progress: 0,
-    accent: "blue",
-  },
-  {
-    id: "v-3",
-    url: "https://youtube.com/watch?v=offers",
-    title: "The fastest way to make an offer better",
-    channel: "Alex Hormozi",
-    durationMinutes: 12,
-    type: "Watch",
-    topics: ["Business"],
-    status: "feed",
-    valueScore: 83,
-    valueReason: "Short, practical, immediately actionable",
-    valueFactors: [
-      { label: "Goal relevance", points: 29, max: 35 },
-      { label: "Mentor fit", points: 15, max: 15 },
-      { label: "Actionability", points: 15, max: 15 },
-      { label: "Novelty", points: 7, max: 10 },
-      { label: "Information density", points: 7, max: 10 },
-      { label: "Time efficiency", points: 8, max: 10 },
-      { label: "Timeliness", points: 2, max: 5 },
-    ],
-    addedAt: Date.now() - 1000 * 60 * 60 * 8,
-    cooldownUntil: 0,
-    progress: 42,
-    accent: "amber",
-  },
-  {
-    id: "v-4",
-    url: "https://youtube.com/watch?v=cp-thinking",
-    title: "How strong programmers think through hard problems",
-    channel: "Competitive Programming",
-    durationMinutes: 31,
-    type: "Watch",
-    topics: ["CP"],
-    status: "feed",
-    valueScore: 78,
-    valueReason: "Supports deliberate problem-solving practice",
-    valueFactors: [
-      { label: "Goal relevance", points: 31, max: 35 },
-      { label: "Mentor fit", points: 8, max: 15 },
-      { label: "Actionability", points: 13, max: 15 },
-      { label: "Novelty", points: 7, max: 10 },
-      { label: "Information density", points: 8, max: 10 },
-      { label: "Time efficiency", points: 7, max: 10 },
-      { label: "Timeliness", points: 4, max: 5 },
-    ],
-    addedAt: Date.now() - 1000 * 60 * 60 * 24,
-    cooldownUntil: 0,
-    progress: 100,
-    accent: "green",
-  },
-];
+const starterVideos: Video[] = [];
+const ARCHIVE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 
 function getYouTubeId(value: string) {
   try {
@@ -307,6 +210,11 @@ function countdown(until: number, now: number) {
   const seconds = Math.max(0, Math.ceil((until - now) / 1000));
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function archiveCountdown(addedAt: number, now: number) {
+  const days = Math.max(0, Math.ceil((addedAt + ARCHIVE_AFTER_MS - now) / 86_400_000));
+  return days === 1 ? "Archives in 1 day" : `Archives in ${days} days`;
 }
 
 function renderInlineMarkdown(value: string): ReactNode[] {
@@ -544,7 +452,7 @@ function normalizeVideo(video: Partial<Video> & { topic?: string }): Video {
       : Date.now();
   const status =
     starterMatch?.status ??
-    (["feed", "inbox", "queued", "watched"].includes(video.status ?? "")
+    (["feed", "inbox", "queued", "watched", "archived"].includes(video.status ?? "")
       ? (video.status as Status)
       : "feed");
   const configuredCooldownUntil = addedAt + COOLDOWN_MINUTES * 60 * 1000;
@@ -581,6 +489,8 @@ function normalizeVideo(video: Partial<Video> & { topic?: string }): Video {
       status === "inbox"
         ? Math.min(video.cooldownUntil || configuredCooldownUntil, configuredCooldownUntil)
         : video.cooldownUntil ?? 0,
+    finishedAt: video.finishedAt,
+    archivedAt: video.archivedAt,
     progress: video.progress ?? 0,
     accent: video.accent ?? "red",
   };
@@ -647,14 +557,13 @@ export default function Home() {
     "info",
   );
   const [activeType, setActiveType] = useState<ContentType>("Watch");
-  const [activeStatus, setActiveStatus] = useState<Status>("inbox");
+  const [activeStatus, setActiveStatus] = useState<LibraryView>("inbox");
   const [activeTopic, setActiveTopic] = useState<"All" | Topic>("All");
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("value");
+  const [sort, setSort] = useState("newest");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [lastRemoved, setLastRemoved] = useState<Video | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [noteUpdatedAt, setNoteUpdatedAt] = useState<Record<string, number>>({});
   const [analysisDetails, setAnalysisDetails] = useState<
@@ -717,7 +626,29 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    const timer = window.setInterval(() => {
+      const currentTime = Date.now();
+      setNow(currentTime);
+      setVideos((current) => {
+        let changed = false;
+        const next = current.map((video) => {
+          if (
+            video.status !== "watched" &&
+            video.status !== "archived" &&
+            currentTime - video.addedAt >= ARCHIVE_AFTER_MS
+          ) {
+            changed = true;
+            return {
+              ...video,
+              status: "archived" as const,
+              archivedAt: currentTime,
+            };
+          }
+          return video;
+        });
+        return changed ? next : current;
+      });
+    }, 1000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -747,7 +678,7 @@ export default function Home() {
       });
       if (document.visibilityState === "visible") {
         setActiveType(capturedItem.type);
-        setActiveStatus("inbox");
+        openLibraryView("inbox");
         setNotice(event.data.message ?? "Captured in ReSync.");
         setNoticeTone("success");
       }
@@ -1019,7 +950,7 @@ export default function Home() {
               : [capturedItem, ...current];
           });
           setActiveType(capturedItem.type);
-          setActiveStatus("inbox");
+          openLibraryView("inbox");
           setNotice(result.message ?? "Captured in ReSync.");
           setNoticeTone("success");
           if (capturedItem.type === "Watch") {
@@ -1167,6 +1098,12 @@ export default function Home() {
       watched: videos.filter(
         (video) => video.type === activeType && video.status === "watched",
       ).length,
+      archived: videos.filter(
+        (video) => video.type === activeType && video.status === "archived",
+      ).length,
+      history: videos.filter(
+        (video) => video.type === activeType && video.status === "watched",
+      ).length,
     }),
     [activeType, videos],
   );
@@ -1185,7 +1122,10 @@ export default function Home() {
   const visibleVideos = useMemo(() => {
     const result = videos.filter((video) => {
       const matchesType = video.type === activeType;
-      const matchesStatus = video.status === activeStatus;
+      const matchesStatus =
+        activeStatus === "history"
+          ? video.status === "watched"
+          : video.status === activeStatus;
       const matchesTopic =
         activeTopic === "All" || video.topics.includes(activeTopic);
       const query = search.trim().toLowerCase();
@@ -1197,7 +1137,10 @@ export default function Home() {
     });
 
     return result.sort((a, b) => {
-      if (sort === "newest") return b.addedAt - a.addedAt;
+      if (activeStatus === "watched" || activeStatus === "history") {
+        return (b.finishedAt ?? b.addedAt) - (a.finishedAt ?? a.addedAt);
+      }
+      if (activeStatus === "inbox" || sort === "newest") return b.addedAt - a.addedAt;
       if (sort === "shortest") {
         const aDuration = a.durationSeconds || 0;
         const bDuration = b.durationSeconds || 0;
@@ -1708,7 +1651,7 @@ export default function Home() {
 
     setVideos((current) => [newVideo, ...current]);
     setActiveType(detectedType);
-    setActiveStatus("inbox");
+    openLibraryView("inbox");
     setUrl("");
     if (detectedType === "Watch") {
       setNotice("Saved instantly. Fetching title, duration, and channel…");
@@ -1727,10 +1670,21 @@ export default function Home() {
     setVideos((current) =>
       current.map((video) =>
         video.id === id
-          ? { ...video, status, progress: status === "watched" ? 100 : video.progress }
+          ? {
+              ...video,
+              status,
+              progress: status === "watched" ? 100 : video.progress,
+              finishedAt: status === "watched" ? Date.now() : video.finishedAt,
+              archivedAt: status === "archived" ? Date.now() : video.archivedAt,
+            }
           : video,
       ),
     );
+  }
+
+  function openLibraryView(status: LibraryView) {
+    setActiveStatus(status);
+    if (status === "inbox") setSort("newest");
   }
 
   function addToInbox(id: string) {
@@ -1748,7 +1702,7 @@ export default function Home() {
           : video,
       ),
     );
-    setActiveStatus("inbox");
+    openLibraryView("inbox");
     setNotice(`Added to Inbox. ${COOLDOWN_MINUTES}-minute cooldown started.`);
     setNoticeTone("success");
   }
@@ -1762,7 +1716,7 @@ export default function Home() {
           : video,
       ),
     );
-    setActiveStatus("queued");
+    openLibraryView("queued");
     setNotice("Cooldown complete. Item moved to Queue.");
     setNoticeTone("success");
   }
@@ -1812,21 +1766,48 @@ export default function Home() {
     window.addEventListener("pointerup", onUp);
   }
 
-  function removeVideo(video: Video) {
+  async function removeVideo(video: Video) {
     setOpenMenuId(null);
-    setVideos((current) => current.filter((item) => item.id !== video.id));
-    setLastRemoved(video);
-    if (selectedId === video.id) setSelectedId(null);
-    setNotice(`${video.type === "Watch" ? "Video" : "Article"} removed.`);
-    setNoticeTone("success");
-  }
-
-  function undoRemove() {
-    if (!lastRemoved) return;
-    setVideos((current) => [lastRemoved, ...current]);
-    setLastRemoved(null);
-    setNotice("Item restored.");
-    setNoticeTone("success");
+    const confirmed = window.confirm(
+      `Permanently delete this ${video.type === "Watch" ? "video" : "article"}? This removes its notes, transcript/source, AI analysis, chat history, learning summary, and usage records from D1, plus its unshared R2 source object.`,
+    );
+    if (!confirmed) return;
+    setNotice("Deleting item and its related data…");
+    setNoticeTone("info");
+    try {
+      const response = await fetch(`/api/library?id=${encodeURIComponent(video.id)}`, {
+        method: "DELETE",
+      });
+      const result = (await response.json().catch(() => null)) as
+        | { deleted?: boolean; error?: string }
+        | null;
+      if (!response.ok || !result?.deleted) {
+        throw new Error(result?.error ?? "Delete failed.");
+      }
+      setVideos((current) => current.filter((item) => item.id !== video.id));
+      setNotes((current) => {
+        const next = { ...current };
+        delete next[video.id];
+        return next;
+      });
+      setAnalysisDetails((current) => {
+        const next = { ...current };
+        delete next[video.id];
+        return next;
+      });
+      setKnowledgeSummaries((current) => {
+        const next = { ...current };
+        delete next[video.id];
+        return next;
+      });
+      setUsageEvents((current) => current.filter((event) => event.item_id !== video.id));
+      if (selectedId === video.id) setSelectedId(null);
+      setNotice(`${video.type === "Watch" ? "Video" : "Article"} and related data deleted.`);
+      setNoticeTone("success");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Delete failed.");
+      setNoticeTone("error");
+    }
   }
 
   return (
@@ -1848,14 +1829,14 @@ export default function Home() {
           ].map(([type, label]) => (
             <button
               className={
-                activeType === type && activeStatus === "feed"
+                activeType === type
                   ? "nav-item content-tab active"
                   : "nav-item content-tab"
               }
               key={type}
               onClick={() => {
                 setActiveType(type as ContentType);
-                setActiveStatus("feed");
+                openLibraryView("feed");
               }}
             >
               <span>{label}</span>
@@ -1869,11 +1850,13 @@ export default function Home() {
               ["inbox", "Inbox"],
               ["queued", "Queue"],
               ["watched", "Finished"],
+              ["history", "History"],
+              ["archived", "Archive"],
             ].map(([key, label]) => (
               <button
                 className={activeStatus === key ? "nav-item active" : "nav-item"}
                 key={key}
-                onClick={() => setActiveStatus(key as Status)}
+                onClick={() => openLibraryView(key as LibraryView)}
               >
                 <span>{label}</span>
                 <span className="nav-count">
@@ -2081,6 +2064,8 @@ export default function Home() {
               video.status === "inbox" && now > 0 && video.cooldownUntil <= now;
             const canWatch =
               video.status === "queued" || video.status === "watched";
+            const showArchiveCountdown =
+              now > 0 && video.status !== "watched" && video.status !== "archived";
             const imageUrl =
               video.thumbnailUrl ??
               (video.youtubeId
@@ -2143,7 +2128,9 @@ export default function Home() {
                       )}
                     </span>
                     <span className="added-time">
-                      {relativeTime(video.addedAt, now || video.addedAt + 60000)}
+                      {showArchiveCountdown
+                        ? archiveCountdown(video.addedAt, now)
+                        : relativeTime(video.finishedAt ?? video.addedAt, now || video.addedAt + 60000)}
                     </span>
                   </div>
                   <button className="title-button" onClick={() => openVideo(video.id)}>
@@ -2233,7 +2220,8 @@ export default function Home() {
                               Move to Finished
                             </button>
                           ) : video.status === "queued" ||
-                            video.status === "watched" ? (
+                            video.status === "watched" ||
+                            video.status === "archived" ? (
                             <button
                               role="menuitem"
                               onClick={() => addToInbox(video.id)}
@@ -2269,16 +2257,6 @@ export default function Home() {
           </section>
         ) : null}
       </section>
-
-      {lastRemoved ? (
-        <div className="undo-toast" role="status">
-          <span>Item removed</span>
-          <button onClick={undoRemove}>Undo</button>
-          <button aria-label="Dismiss" onClick={() => setLastRemoved(null)}>
-            ×
-          </button>
-        </div>
-      ) : null}
 
       {profileOpen ? (
         <div

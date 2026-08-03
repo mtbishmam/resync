@@ -43,6 +43,13 @@
       "when": 1785356454982,
       "tag": "0005_rare_slapstick",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1785780787450,
+      "tag": "0006_stale_warhawk",
+      "breakpoints": true
     }
   ]
 }

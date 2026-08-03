@@ -2,250 +2,113 @@ const statusElement = document.querySelector("#status");
 const captureButton = document.querySelector("#capture");
 const manualTranscript = document.querySelector("#manualTranscript");
 const sendManualButton = document.querySelector("#sendManual");
+const bulkLinks = document.querySelector("#bulkLinks");
+const sendBulkButton = document.querySelector("#sendBulk");
+const historyList = document.querySelector("#historyList");
 const RESYNC_HOST = "resync.mtbishmam.chatgpt.site";
-
 let lastCapture = null;
-let activeCaptureId = null;
 let sourceTabId = null;
 
 function isYouTube(url) {
-  try {
-    const hostname = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
-    return (
-      hostname === "youtu.be" ||
-      hostname === "youtube.com" ||
-      hostname.endsWith(".youtube.com")
-    );
-  } catch {
-    return false;
-  }
+  try { const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase(); return host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com"); } catch { return false; }
 }
-
-function isReSync(url) {
-  try {
-    return new URL(url).hostname.toLowerCase() === RESYNC_HOST;
-  } catch {
-    return false;
-  }
-}
+function isReSync(url) { try { return new URL(url).hostname.toLowerCase() === RESYNC_HOST; } catch { return false; } }
 
 async function captureVisiblePage() {
-  const youtube = /(^|\.)youtube\.com$|^youtu\.be$/.test(
-    location.hostname.replace(/^www\./, "").toLowerCase(),
-  );
-
+  const youtube = /(^|\.)youtube\.com$|^youtu\.be$/.test(location.hostname.replace(/^www\./, "").toLowerCase());
   function transcriptText() {
-    const segments = Array.from(
-      document.querySelectorAll(
-        "ytd-transcript-segment-renderer, transcript-segment-view-model",
-      ),
-    );
-    return segments
+    return Array.from(document.querySelectorAll("ytd-transcript-segment-renderer, transcript-segment-view-model"))
       .map((segment) => {
-        const timestamp =
-          segment
-            .querySelector(
-              ".segment-timestamp, .ytwTranscriptSegmentViewModelTimestamp",
-            )
-            ?.textContent?.trim() ?? "";
-        const text =
-          segment
-            .querySelector(
-              ".segment-text, .ytAttributedStringHost[role='text']",
-            )
-            ?.textContent?.trim() ?? "";
-        return text ? `${timestamp} ${text}`.trim() : "";
-      })
-      .filter(Boolean)
-      .join("\n");
+        const time = segment.querySelector(".segment-timestamp, .ytwTranscriptSegmentViewModelTimestamp")?.textContent?.trim() ?? "";
+        const text = segment.querySelector(".segment-text, .ytAttributedStringHost[role='text']")?.textContent?.trim() ?? "";
+        return text ? `${time} ${text}`.trim() : "";
+      }).filter(Boolean).join("\n");
   }
-
   async function tryOpenTranscript() {
-    const isVisible = (element) =>
-      element instanceof HTMLElement &&
-      element.getClientRects().length > 0 &&
-      getComputedStyle(element).visibility !== "hidden";
-
-    const originalX = window.scrollX;
-    const originalY = window.scrollY;
-    const htmlScrollBehavior = document.documentElement.style.scrollBehavior;
-    const bodyScrollBehavior = document.body.style.scrollBehavior;
-    document.documentElement.style.setProperty(
-      "scroll-behavior",
-      "auto",
-      "important",
-    );
-    document.body.style.setProperty("scroll-behavior", "auto", "important");
-    const holdViewport = () => {
-      if (window.scrollX !== originalX || window.scrollY !== originalY) {
-        window.scrollTo(originalX, originalY);
-      }
-    };
-    window.addEventListener("scroll", holdViewport, { passive: true });
-    const holdTimer = window.setInterval(holdViewport, 40);
-
-    try {
-      const expand = Array.from(
-        document.querySelectorAll(
-          "ytd-text-inline-expander #expand, #description-inline-expander #expand",
-        ),
-      ).find(isVisible);
-      expand?.click();
-
-      let transcriptControl = null;
-      for (let attempt = 0; attempt < 15; attempt += 1) {
-        transcriptControl = Array.from(
-          document.querySelectorAll("button, [role='button']"),
-        ).find(
-          (element) =>
-            isVisible(element) &&
-            /show transcript/i.test(
-              `${element.getAttribute("aria-label") ?? ""} ${element.textContent ?? ""}`,
-            ),
-        );
-        if (transcriptControl) break;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      transcriptControl?.click();
-
-      for (let attempt = 0; attempt < 60; attempt += 1) {
-        const text = transcriptText();
-        if (text.length >= 40) return text;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      return "";
-    } finally {
-      window.clearInterval(holdTimer);
-      window.removeEventListener("scroll", holdViewport);
-      document.documentElement.style.scrollBehavior = htmlScrollBehavior;
-      document.body.style.scrollBehavior = bodyScrollBehavior;
-      window.scrollTo(originalX, originalY);
+    const visible = (element) => element instanceof HTMLElement && element.getClientRects().length > 0;
+    document.querySelector("ytd-text-inline-expander #expand, #description-inline-expander #expand")?.click();
+    for (let i = 0; i < 15; i += 1) {
+      const control = Array.from(document.querySelectorAll("button, [role='button']")).find((el) => visible(el) && /show transcript/i.test(`${el.getAttribute("aria-label") ?? ""} ${el.textContent ?? ""}`));
+      if (control) { control.click(); break; }
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    for (let i = 0; i < 60; i += 1) { const text = transcriptText(); if (text.length >= 40) return text; await new Promise((resolve) => setTimeout(resolve, 100)); }
+    return "";
   }
-
-  if (youtube) {
-    const existing = transcriptText();
-    return {
-      url: location.href,
-      title: document.title.replace(/\s*-\s*YouTube\s*$/i, ""),
-      author:
-        document.querySelector("#owner #channel-name")?.textContent?.trim() ??
-        "YouTube",
-      content: existing.length >= 40 ? existing : await tryOpenTranscript(),
-    };
-  }
-
-  const root =
-    document.querySelector("article") ??
-    document.querySelector("main") ??
-    document.querySelector("[role='main']") ??
-    document.body;
+  if (youtube) return { url: location.href, title: document.title.replace(/\s*-\s*YouTube\s*$/i, ""), author: document.querySelector("#owner #channel-name")?.textContent?.trim() ?? "YouTube", content: transcriptText() || await tryOpenTranscript() };
+  const root = document.querySelector("article") ?? document.querySelector("main") ?? document.querySelector("[role='main']") ?? document.body;
   const clone = root.cloneNode(true);
-  clone
-    .querySelectorAll(
-      "script, style, noscript, nav, header, footer, aside, form, button, svg",
-    )
-    .forEach((element) => element.remove());
-  const content = clone.innerText
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
-  return {
-    url: location.href,
-    title: document.title,
-    author: location.hostname.replace(/^www\./, ""),
-    content,
-  };
+  clone.querySelectorAll("script, style, noscript, nav, header, footer, aside, form, button, svg").forEach((el) => el.remove());
+  return { url: location.href, title: document.title, author: location.hostname.replace(/^www\./, ""), content: clone.innerText.replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim() };
 }
 
-async function sendToReSync(capture) {
-  const result = await chrome.runtime.sendMessage({
-    type: "resync-enqueue-capture",
-    capture,
-    sourceTabId,
-  });
-  if (!result?.ok || !result.captureId) {
-    throw new Error(result?.error || "ReSync could not queue this capture.");
-  }
-  activeCaptureId = result.captureId;
-  statusElement.textContent =
-    "Queued safely. Sending in the background…";
+async function enqueue(capture, tabId = sourceTabId) {
+  const result = await chrome.runtime.sendMessage({ type: "resync-enqueue-capture", capture, sourceTabId: tabId });
+  if (!result?.ok) throw new Error(result?.error || "ReSync could not queue this capture.");
+  return result;
 }
 
-async function capture() {
-  captureButton.hidden = true;
+async function captureCurrent() {
   captureButton.disabled = true;
   statusElement.textContent = "Reading this page…";
+  manualTranscript.hidden = true;
+  sendManualButton.hidden = true;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id || !tab.url?.startsWith("http")) {
-      throw new Error("Open a YouTube video or article first.");
-    }
+    if (!tab?.id || !tab.url?.startsWith("http") || isReSync(tab.url)) throw new Error("Open a YouTube video or article first.");
     sourceTabId = tab.id;
-    if (isReSync(tab.url)) {
-      throw new Error(
-        "ReSync is already open. Capture a YouTube video or article tab instead.",
-      );
-    }
-    let result;
-    try {
-      [result] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: captureVisiblePage,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/cannot access|permission|host/i.test(message)) {
-        throw new Error(
-          "ReSync needs access to YouTube. Reload version 0.3.1 and allow its YouTube permission.",
-        );
-      }
-      throw error;
-    }
+    const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: captureVisiblePage });
     lastCapture = result.result;
     if (!lastCapture?.content || lastCapture.content.length < 40) {
-      if (isYouTube(lastCapture?.url ?? tab.url)) {
-        manualTranscript.hidden = false;
-        sendManualButton.hidden = false;
-        statusElement.textContent =
-          "YouTube did not expose the transcript. Paste it below.";
-        return;
-      }
-      throw new Error("This page did not expose readable article text.");
+      if (!isYouTube(lastCapture?.url ?? tab.url)) throw new Error("This page did not expose readable article text.");
+      manualTranscript.hidden = false;
+      sendManualButton.hidden = false;
+      statusElement.textContent = "Transcript not exposed. Paste it below, or send the link without it.";
+      lastCapture = { ...lastCapture, content: "" };
+      return;
     }
-    await sendToReSync(lastCapture);
-  } catch (error) {
-    statusElement.textContent =
-      error instanceof Error ? error.message : "Capture failed.";
-    captureButton.hidden = false;
-  } finally {
-    captureButton.disabled = false;
-  }
+    await enqueue(lastCapture, tab.id);
+    statusElement.textContent = "Queued safely. You can close this popup.";
+  } catch (error) { statusElement.textContent = error instanceof Error ? error.message : "Capture failed."; }
+  finally { captureButton.disabled = false; }
 }
 
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  const feedback = changes.captureFeedback?.newValue;
-  if (
-    areaName !== "local" ||
-    !feedback ||
-    (activeCaptureId && feedback.captureId !== activeCaptureId)
-  ) {
-    return;
-  }
-  statusElement.textContent = feedback.ok
-    ? `✓ ${feedback.message || "Saved to ReSync Inbox."}`
-    : `Could not save: ${feedback.message || "Capture failed."}`;
-  captureButton.hidden = feedback.ok;
-});
+function validLinks(value) {
+  return [...new Set(value.split(/\s+/).map((line) => line.trim()).filter(Boolean).filter((line) => { try { const url = new URL(line); return url.protocol === "http:" || url.protocol === "https:"; } catch { return false; } }))];
+}
 
-captureButton.addEventListener("click", () => void capture());
-sendManualButton.addEventListener("click", () => {
+async function sendBulk() {
+  const links = validLinks(bulkLinks.value);
+  if (!links.length) { statusElement.textContent = "Paste at least one valid link."; return; }
+  sendBulkButton.disabled = true;
+  try {
+    await Promise.all(links.map((url) => enqueue({ url, title: isYouTube(url) ? "Saved YouTube video" : new URL(url).hostname, author: new URL(url).hostname, content: "" }, undefined)));
+    bulkLinks.value = "";
+    statusElement.textContent = `${links.length} link${links.length === 1 ? "" : "s"} queued safely.`;
+  } catch (error) { statusElement.textContent = error instanceof Error ? error.message : "Bulk capture failed."; }
+  finally { sendBulkButton.disabled = false; }
+}
+
+async function renderState() {
+  const state = await chrome.runtime.sendMessage({ type: "resync-get-state" });
+  const history = Array.isArray(state?.captureHistory) ? state.captureHistory.slice(0, 5) : [];
+  const pending = Array.isArray(state?.pendingCaptures) ? state.pendingCaptures.length : 0;
+  historyList.replaceChildren();
+  if (!history.length) historyList.innerHTML = "<small>No saved links yet.</small>";
+  for (const item of history) {
+    const row = document.createElement("div"); row.className = "history-item";
+    const tick = document.createElement("span"); tick.textContent = "✓";
+    const title = document.createElement("span"); title.textContent = item.title || item.url;
+    row.append(tick, title); historyList.append(row);
+  }
+  if (pending) statusElement.textContent = `${pending} capture${pending === 1 ? "" : "s"} still queued.`;
+}
+
+captureButton.addEventListener("click", () => void captureCurrent());
+sendBulkButton.addEventListener("click", () => void sendBulk());
+sendManualButton.addEventListener("click", async () => {
   const content = manualTranscript.value.trim();
-  if (!lastCapture || content.length < 40) {
-    statusElement.textContent = "Paste the full transcript first.";
-    return;
-  }
-  void sendToReSync({ ...lastCapture, content });
+  if (!lastCapture) return;
+  try { await enqueue({ ...lastCapture, content }, sourceTabId); statusElement.textContent = "Queued safely."; manualTranscript.hidden = true; sendManualButton.hidden = true; } catch (error) { statusElement.textContent = error instanceof Error ? error.message : "Capture failed."; }
 });
-
-void capture();
+void renderState();

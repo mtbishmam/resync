@@ -8,26 +8,19 @@
   </head>
   <body>
     <main>
-      <div class="brand">
-        <span>R</span>
-        <div>
-          <strong>ReSync</strong>
-          <small>Intentional capture</small>
-        </div>
-      </div>
-      <p id="status">Reading this page…</p>
-      <textarea
-        id="manualTranscript"
-        hidden
-        placeholder="YouTube transcript was not detected. Paste the full transcript here…"
-      ></textarea>
-      <div class="actions">
-        <button id="capture" hidden>Try again</button>
-        <button id="sendManual" hidden>Send pasted transcript</button>
-      </div>
-      <small class="privacy">
-        Every capture stays queued until ReSync confirms the save.
-      </small>
+      <div class="brand"><span>R</span><div><strong>ReSync</strong><small>Capture</small></div></div>
+      <button id="capture" class="primary">Send current tab</button>
+      <p id="status" aria-live="polite">Ready.</p>
+      <textarea id="manualTranscript" hidden placeholder="Paste the YouTube transcript here…"></textarea>
+      <button id="sendManual" hidden>Send pasted transcript</button>
+      <div class="divider"><span>or bulk add</span></div>
+      <textarea id="bulkLinks" placeholder="Paste one link per line"></textarea>
+      <button id="sendBulk">Send links</button>
+      <section class="history">
+        <strong>Recent</strong>
+        <div id="historyList"><small>No saved links yet.</small></div>
+      </section>
+      <small class="privacy">Queued captures retry until ReSync confirms them.</small>
     </main>
     <script src="popup.js"></script>
   </body>

@@ -40,6 +40,8 @@ export const items = sqliteTable(
     valueFactorsJson: text("value_factors_json"),
     addedAt: integer("added_at").notNull(),
     cooldownUntil: integer("cooldown_until").notNull().default(0),
+    finishedAt: integer("finished_at"),
+    archivedAt: integer("archived_at"),
     progress: integer("progress").notNull().default(0),
     accent: text("accent").notNull().default("red"),
     transcriptStatus: text("transcript_status").notNull().default("pending"),

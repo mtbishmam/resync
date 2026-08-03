@@ -32,6 +32,8 @@ const CREATE_STATEMENTS = [
     value_factors_json TEXT,
     added_at INTEGER NOT NULL,
     cooldown_until INTEGER DEFAULT 0 NOT NULL,
+    finished_at INTEGER,
+    archived_at INTEGER,
     progress INTEGER DEFAULT 0 NOT NULL,
     accent TEXT DEFAULT 'red' NOT NULL,
     transcript_status TEXT DEFAULT 'pending' NOT NULL,
@@ -188,12 +190,14 @@ export type LibraryItem = {
   durationSeconds?: number;
   type: "Watch" | "Read";
   topics: Array<"AI" | "CP" | "Tech" | "Business">;
-  status: "feed" | "inbox" | "queued" | "watched";
+  status: "feed" | "inbox" | "queued" | "watched" | "archived";
   valueScore: number;
   valueReason: string;
   valueFactors?: Array<{ label: string; points: number; max: number }>;
   addedAt: number;
   cooldownUntil: number;
+  finishedAt?: number;
+  archivedAt?: number;
   progress: number;
   accent: string;
   transcriptStatus?: "pending" | "available" | "unavailable" | "error";
@@ -222,6 +226,8 @@ export type ItemRow = {
   value_factors_json: string | null;
   added_at: number;
   cooldown_until: number;
+  finished_at: number | null;
+  archived_at: number | null;
   progress: number;
   accent: string;
   transcript_status: string;
@@ -264,7 +270,7 @@ export function normalizeLibraryItem(value: unknown): LibraryItem | null {
       )
     : [];
   const type = item.type === "Read" ? "Read" : "Watch";
-  const allowedStatuses = new Set(["feed", "inbox", "queued", "watched"]);
+  const allowedStatuses = new Set(["feed", "inbox", "queued", "watched", "archived"]);
   const status = allowedStatuses.has(stringValue(item.status))
     ? (item.status as LibraryItem["status"])
     : "inbox";
@@ -306,6 +312,8 @@ export function normalizeLibraryItem(value: unknown): LibraryItem | null {
       : undefined,
     addedAt: Math.max(1, numberValue(item.addedAt, Date.now())),
     cooldownUntil: Math.max(0, numberValue(item.cooldownUntil)),
+    finishedAt: numberValue(item.finishedAt) || undefined,
+    archivedAt: numberValue(item.archivedAt) || undefined,
     progress: Math.max(0, Math.min(100, numberValue(item.progress))),
     accent: stringValue(item.accent, "red"),
     transcriptStatus,
@@ -340,6 +348,8 @@ export function itemFromRow(row: ItemRow): LibraryItem {
     ),
     addedAt: row.added_at,
     cooldownUntil: row.cooldown_until,
+    finishedAt: row.finished_at ?? undefined,
+    archivedAt: row.archived_at ?? undefined,
     progress: row.progress,
     accent: row.accent,
     transcriptStatus: row.transcript_status as LibraryItem["transcriptStatus"],
@@ -359,10 +369,10 @@ export function upsertItemStatement(
         published_at, tags_json, caption_available, metadata_complete,
         duration_minutes, duration_seconds, content_type, topics_json, status,
         value_score, value_reason, value_factors_json, added_at, cooldown_until,
-        progress, accent, transcript_status, analysis_status, updated_at
+        finished_at, archived_at, progress, accent, transcript_status, analysis_status, updated_at
       ) VALUES (
         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26
+        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28
       )
       ON CONFLICT(id) DO UPDATE SET
         youtube_id = excluded.youtube_id,
@@ -385,6 +395,8 @@ export function upsertItemStatement(
         value_factors_json = excluded.value_factors_json,
         added_at = excluded.added_at,
         cooldown_until = excluded.cooldown_until,
+        finished_at = excluded.finished_at,
+        archived_at = excluded.archived_at,
         progress = excluded.progress,
         accent = excluded.accent,
         transcript_status = excluded.transcript_status,
@@ -417,6 +429,8 @@ export function upsertItemStatement(
       item.valueFactors ? JSON.stringify(item.valueFactors) : null,
       item.addedAt,
       item.cooldownUntil,
+      item.finishedAt ?? null,
+      item.archivedAt ?? null,
       item.progress,
       item.accent,
       item.transcriptStatus ?? "pending",
@@ -490,6 +504,14 @@ async function migrateLegacySnapshot(d1: D1Database) {
 export async function ensureNormalizedLibrary() {
   const d1 = await getD1();
   await d1.batch(CREATE_STATEMENTS.map((statement) => d1.prepare(statement)));
+  const columns = await d1.prepare("PRAGMA table_info(items)").all<{ name: string }>();
+  const names = new Set((columns.results ?? []).map((column) => column.name));
+  if (!names.has("finished_at")) {
+    await d1.prepare("ALTER TABLE items ADD COLUMN finished_at INTEGER").run();
+  }
+  if (!names.has("archived_at")) {
+    await d1.prepare("ALTER TABLE items ADD COLUMN archived_at INTEGER").run();
+  }
   await migrateLegacySnapshot(d1);
   return d1;
 }

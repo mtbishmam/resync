@@ -9,15 +9,27 @@ async function source(path) {
 test("production starts empty and lifecycle views use persisted timestamps", async () => {
   const page = await source("app/page.tsx");
   const library = await source("db/library.ts");
+  const analyze = await source("app/api/analyze/route.ts");
+  const capture = await source("app/api/capture/route.ts");
 
   assert.match(page, /const starterVideos: Video\[\] = \[\];/);
   assert.match(page, /\["history", "History"\]/);
+  assert.match(page, /\["favorites", "Favorites"\]/);
+  assert.match(page, /\["liked", "Liked"\]/);
   assert.match(page, /\["archived", "Archive"\]/);
-  assert.match(page, /activeStatus === "inbox"[\s\S]*b\.addedAt - a\.addedAt/);
+  assert.doesNotMatch(page, /activeStatus === "inbox" \|\| sort === "newest"/);
+  assert.match(page, /if \(sort === "newest"\) return b\.addedAt - a\.addedAt/);
   assert.match(page, /b\.finishedAt \?\? b\.addedAt/);
+  assert.match(page, /latestHistoryAt\.get\(b\.id\)/);
   assert.match(page, /ARCHIVE_AFTER_MS/);
+  assert.doesNotMatch(page, /COOLDOWN_MINUTES/);
+  assert.doesNotMatch(analyze, /cooldown_pending/);
+  assert.match(capture, /status: "inbox"[\s\S]*cooldownUntil: 0/);
   assert.match(library, /finished_at/);
   assert.match(library, /archived_at/);
+  assert.match(library, /CREATE TABLE IF NOT EXISTS consumption_history/);
+  assert.match(library, /favorite INTEGER DEFAULT 0 NOT NULL/);
+  assert.match(library, /liked INTEGER DEFAULT 0 NOT NULL/);
 });
 
 test("item deletion is explicit, cascades D1 children, and cleans unshared R2 objects", async () => {

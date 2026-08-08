@@ -7,7 +7,6 @@ import {
 } from "../../../db/library";
 import { storeSourceDocument } from "../../../lib/transcript-analysis";
 
-const COOLDOWN_MINUTES = 5;
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
 function noStoreJson(value: unknown, init?: ResponseInit) {
@@ -86,11 +85,12 @@ export async function POST(request: Request) {
           ...current,
           title: shortText(body.title, current.title),
           channel: shortText(body.author, current.channel, 200),
-          status: current.status === "feed" ? "inbox" : current.status,
-          cooldownUntil:
-            current.status === "feed"
-              ? now + COOLDOWN_MINUTES * 60 * 1000
-              : current.cooldownUntil,
+          status: "inbox",
+          addedAt: now,
+          cooldownUntil: 0,
+          finishedAt: undefined,
+          archivedAt: undefined,
+          progress: 0,
         }
       : {
           id: crypto.randomUUID(),
@@ -106,10 +106,12 @@ export async function POST(request: Request) {
           type,
           topics: [],
           status: "inbox",
+          favorite: false,
+          liked: false,
           valueScore: 0,
-          valueReason: "AI analysis begins after cooldown",
+          valueReason: "AI analysis pending",
           addedAt: now,
-          cooldownUntil: now + COOLDOWN_MINUTES * 60 * 1000,
+          cooldownUntil: 0,
           progress: 0,
           accent: type === "Watch" ? "red" : "blue",
           transcriptStatus:
@@ -145,7 +147,9 @@ export async function POST(request: Request) {
       message:
         type === "Watch" && !contentCaptured
           ? "Saved to Inbox. YouTube transcript was not found; paste it in the extension or ReSync."
-          : `Saved to Inbox. Analysis begins after the ${COOLDOWN_MINUTES}-minute cooldown.`,
+          : existing
+            ? "Saved to Inbox for another pass."
+            : "Saved to Inbox. Analysis begins immediately.",
     });
   } catch {
     return noStoreJson(

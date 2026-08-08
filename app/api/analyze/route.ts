@@ -169,18 +169,6 @@ export async function POST(request: Request) {
       return noStoreJson(result);
     }
 
-    if (item.cooldownUntil > Date.now()) {
-      return noStoreJson(
-        {
-          status: "cooldown_pending",
-          analysisStatus: "pending",
-          cooldownUntil: item.cooldownUntil,
-          message: "Analysis begins when the cooldown ends.",
-        },
-        { status: 409 },
-      );
-    }
-
     const storedContent = await loadSourceDocument({
       d1,
       itemId: item.id,

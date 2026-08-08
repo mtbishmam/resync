@@ -20,17 +20,22 @@ const TABLES = {
     "content_type",
     "topics_json",
     "status",
+    "favorite",
+    "liked",
     "value_score",
     "value_reason",
     "value_factors_json",
     "added_at",
     "cooldown_until",
+    "finished_at",
+    "archived_at",
     "progress",
     "accent",
     "transcript_status",
     "analysis_status",
     "updated_at",
   ],
+  consumption_history: ["id", "item_id", "completed_at"],
   notes: ["id", "item_id", "body_markdown", "created_at", "updated_at"],
   note_anchors: [
     "id",
@@ -223,6 +228,12 @@ function transferValue(
   row: Record<string, unknown>,
 ) {
   if (row[column] !== undefined && row[column] !== null) return row[column];
+  if (
+    table === "items" &&
+    (column === "favorite" || column === "liked" || column === "cooldown_until")
+  ) {
+    return 0;
+  }
   if (table !== "source_documents") return null;
   if (column === "storage_backend") return "d1";
   if (column === "storage_status") return "ready";

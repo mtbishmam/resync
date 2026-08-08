@@ -4,13 +4,14 @@ import test from "node:test";
 import vm from "node:vm";
 import { webcrypto } from "node:crypto";
 
-async function loadBackground() {
+async function loadBackground(options = {}) {
   const state = {};
   const createdTabs = [];
   const removedTabs = [];
   const badgeUpdates = [];
   const notifications = [];
   const alarms = [];
+  const tabMessages = [];
   let messageListener;
   let tabUpdatedListener;
 
@@ -78,6 +79,13 @@ async function loadBackground() {
       async remove(tabId) {
         removedTabs.push(tabId);
       },
+      async query() {
+        return [{ id: 900, url: "https://resync.mtbishmam.chatgpt.site/" }];
+      },
+      async sendMessage(tabId, message) {
+        tabMessages.push({ tabId, message });
+        return { ok: true };
+      },
       onUpdated: {
         addListener(listener) {
           tabUpdatedListener = listener;
@@ -96,6 +104,7 @@ async function loadBackground() {
     Date,
     Error,
     Promise,
+    fetch: options.fetch,
     URLSearchParams,
     encodeURIComponent,
   });
@@ -133,11 +142,54 @@ async function loadBackground() {
     removedTabs,
     sendMessage,
     state,
+    tabMessages,
     updateTab(tabId, changeInfo) {
       tabUpdatedListener(tabId, changeInfo);
     },
   };
 }
+
+test("a direct capture updates an already-open ReSync tab", async () => {
+  const savedItem = {
+    id: "captured-item",
+    url: "https://example.com/new",
+    title: "New article",
+    type: "Read",
+    status: "inbox",
+  };
+  const background = await loadBackground({
+    fetch: async () =>
+      new Response(
+        JSON.stringify({ item: savedItem, message: "Saved to Inbox." }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  });
+
+  const capture = await background.sendMessage({
+    type: "resync-enqueue-capture",
+    sourceTabId: 201,
+    capture: {
+      url: savedItem.url,
+      title: savedItem.title,
+      content: "A sufficiently long article body for direct delivery testing.",
+    },
+  });
+  await background.flushQueue();
+
+  assert.equal(capture.ok, true);
+  assert.equal(background.createdTabs.length, 0);
+  assert.equal(background.state.pendingCaptures.length, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(background.tabMessages)), [
+    {
+      tabId: 900,
+      message: {
+        type: "resync-item-captured",
+        item: savedItem,
+        message: "Saved to Inbox.",
+      },
+    },
+  ]);
+});
 
 test("rapid captures remain separate and acknowledgements remove only their match", async () => {
   const background = await loadBackground();

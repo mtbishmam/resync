@@ -52,6 +52,18 @@ type UsageRow = {
   created_at: number;
 };
 
+type HistoryRow = {
+  id: string;
+  item_id: string;
+  completed_at: number;
+};
+
+type HistoryEvent = {
+  id: string;
+  itemId: string;
+  completedAt: number;
+};
+
 function noStoreJson(value: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
   headers.set("cache-control", "no-store");
@@ -65,6 +77,33 @@ function parseNotes(value: unknown): Record<string, string> | null {
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
+function parseHistoryEvents(value: unknown): HistoryEvent[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const events: HistoryEvent[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const event = entry as Record<string, unknown>;
+    if (
+      typeof event.id !== "string" ||
+      !event.id ||
+      typeof event.itemId !== "string" ||
+      !event.itemId ||
+      typeof event.completedAt !== "number" ||
+      !Number.isFinite(event.completedAt) ||
+      event.completedAt <= 0
+    ) {
+      return null;
+    }
+    events.push({
+      id: event.id,
+      itemId: event.itemId,
+      completedAt: event.completedAt,
+    });
+  }
+  return events;
+}
+
 export async function GET() {
   try {
     const d1 = await ensureNormalizedLibrary();
@@ -74,6 +113,7 @@ export async function GET() {
       analysisResults,
       knowledgeResults,
       usageResults,
+      historyResults,
       initialized,
     ] =
       await Promise.all([
@@ -103,6 +143,12 @@ export async function GET() {
            FROM ai_usage_events ORDER BY created_at DESC`,
         )
         .all<UsageRow>(),
+      d1
+        .prepare(
+          `SELECT id, item_id, completed_at
+           FROM consumption_history ORDER BY completed_at DESC`,
+        )
+        .all<HistoryRow>(),
       d1
         .prepare("SELECT value FROM app_meta WHERE key = ?1")
         .bind(NORMALIZED_LIBRARY_KEY)
@@ -148,6 +194,11 @@ export async function GET() {
         ]),
       ),
       usageEvents: usageResults.results ?? [],
+      historyEvents: (historyResults.results ?? []).map((event) => ({
+        id: event.id,
+        itemId: event.item_id,
+        completedAt: event.completed_at,
+      })),
       models: {
         text: TEXT_MODEL,
         transcription: TRANSCRIPTION_MODEL,
@@ -178,9 +229,11 @@ export async function PUT(request: Request) {
     const body = JSON.parse(rawBody) as {
       videos?: unknown;
       notes?: unknown;
+      historyEvents?: unknown;
     };
     const notes = parseNotes(body.notes);
-    if (!Array.isArray(body.videos) || !notes) {
+    const historyEvents = parseHistoryEvents(body.historyEvents);
+    if (!Array.isArray(body.videos) || !notes || !historyEvents) {
       return noStoreJson(
         { error: "Invalid ReSync library data." },
         { status: 400 },
@@ -212,6 +265,19 @@ export async function PUT(request: Request) {
     for (const item of items) {
       statements.push(
         upsertNoteStatement(d1, item.id, notes[item.id] ?? "", updatedAt),
+      );
+    }
+    for (const event of historyEvents) {
+      statements.push(
+        d1
+          .prepare(
+            `INSERT INTO consumption_history (id, item_id, completed_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET
+               item_id = excluded.item_id,
+               completed_at = excluded.completed_at`,
+          )
+          .bind(event.id, event.itemId, event.completedAt),
       );
     }
     statements.push(

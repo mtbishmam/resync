@@ -50,6 +50,13 @@
       "when": 1785780787450,
       "tag": "0006_stale_warhawk",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786181262245,
+      "tag": "0007_clever_grey_gargoyle",
+      "breakpoints": true
     }
   ]
 }

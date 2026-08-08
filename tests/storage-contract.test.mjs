@@ -40,6 +40,9 @@ test("legacy migration preserves completed analysis and clears duplicate D1 text
 
 test("the D1 migration is additive and transfer files omit large R2 bodies", async () => {
   const migration = await source("drizzle/0005_rare_slapstick.sql");
+  const lifecycleMigration = await source(
+    "drizzle/0007_clever_grey_gargoyle.sql",
+  );
   const transfer = await source("app/api/transfer/route.ts");
 
   assert.match(migration, /ALTER TABLE `source_documents` ADD `storage_backend`/);
@@ -49,6 +52,13 @@ test("the D1 migration is additive and transfer files omit large R2 bodies", asy
   assert.doesNotMatch(migration, /\b(?:DROP|DELETE|UPDATE)\b/i);
   assert.match(transfer, /sourceContentIncluded:\s*false/);
   assert.match(transfer, /sourceManifest/);
+  assert.match(lifecycleMigration, /CREATE TABLE `consumption_history`/);
+  assert.match(lifecycleMigration, /ADD `favorite` integer/);
+  assert.match(lifecycleMigration, /ADD `liked` integer/);
+  assert.doesNotMatch(
+    lifecycleMigration,
+    /\bDROP\s+(?:TABLE|INDEX)|\bDELETE\s+FROM|\bUPDATE\s+items\b/i,
+  );
 });
 
 test("uploaded media remains transient", async () => {

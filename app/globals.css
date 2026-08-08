@@ -801,6 +801,18 @@ button {
   color: #277951;
 }
 
+.icon-action.saved {
+  border-color: #e8d48b;
+  background: #fff9df;
+  color: #9a6c00;
+}
+
+.icon-action.saved.liked {
+  border-color: #efb8bd;
+  background: #fff1f2;
+  color: #bd3344;
+}
+
 .overflow-menu-wrap {
   position: relative;
   flex: 0 0 auto;
@@ -1409,6 +1421,28 @@ button {
   color: #7c8389;
   font-size: 11px;
   line-height: 1.45;
+}
+
+.rubric-prompt {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #dfe7e1;
+  border-radius: 11px;
+  background: #f7fbf8;
+}
+
+.rubric-prompt strong {
+  color: #286746;
+  font-size: 12px;
+}
+
+.rubric-prompt p {
+  margin: 0;
+  color: #555f58;
+  font-size: 11px;
+  line-height: 1.55;
 }
 
 .model-list > div {

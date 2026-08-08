@@ -54,4 +54,17 @@ async function deliverPendingCapture() {
   }, 60000);
 }
 
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "resync-item-captured" || !message.item) return;
+  window.postMessage(
+    {
+      type: "resync-item-captured",
+      item: message.item,
+      message: message.message,
+    },
+    "*",
+  );
+  sendResponse({ ok: true });
+});
+
 void deliverPendingCapture();

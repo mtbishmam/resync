@@ -11,7 +11,7 @@ import {
 } from "react";
 
 type Status = "feed" | "inbox" | "queued" | "watched" | "archived";
-type LibraryView = Status | "history";
+type LibraryView = Status | "history" | "favorites" | "liked";
 type ContentType = "Watch" | "Read";
 type Topic = "AI" | "CP" | "Tech" | "Business";
 type CloudStatus = "connecting" | "syncing" | "synced" | "offline";
@@ -118,6 +118,8 @@ type Video = {
   type: ContentType;
   topics: Topic[];
   status: Status;
+  favorite: boolean;
+  liked: boolean;
   valueScore: number;
   valueReason: string;
   valueFactors?: ValueFactor[];
@@ -129,6 +131,12 @@ type Video = {
   accent: string;
 };
 
+type HistoryEvent = {
+  id: string;
+  itemId: string;
+  completedAt: number;
+};
+
 const STORAGE_KEY = "resync-replay-videos";
 const LEGACY_STORAGE_KEY = "later-videos";
 const NOTES_KEY = "resync-replay-notes";
@@ -136,8 +144,6 @@ const SIDEBAR_WIDTH_KEY = "resync-sidebar-width";
 const CLOUD_SYNCED_KEY = "resync-cloud-synced";
 const CLOUD_DIRTY_KEY = "resync-cloud-dirty";
 const CAPTURE_BROADCAST_CHANNEL = "resync-capture-results";
-// Five minutes keeps the cooldown easy to test. The final ReSync release uses 24 hours.
-const COOLDOWN_MINUTES = 5;
 const topicOptions: Topic[] = ["AI", "CP", "Tech", "Business"];
 const topics: Array<"All" | Topic> = ["All", ...topicOptions];
 
@@ -204,12 +210,6 @@ function relativeTime(timestamp: number, now: number) {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
-}
-
-function countdown(until: number, now: number) {
-  const seconds = Math.max(0, Math.ceil((until - now) / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 function archiveCountdown(addedAt: number, now: number) {
@@ -455,7 +455,6 @@ function normalizeVideo(video: Partial<Video> & { topic?: string }): Video {
     (["feed", "inbox", "queued", "watched", "archived"].includes(video.status ?? "")
       ? (video.status as Status)
       : "feed");
-  const configuredCooldownUntil = addedAt + COOLDOWN_MINUTES * 60 * 1000;
   const legacyTopic = video.topic === "Development" ? "Tech" : video.topic;
   const normalizedTopics = (
     Array.isArray(video.topics) ? video.topics : legacyTopic ? [legacyTopic] : []
@@ -481,14 +480,13 @@ function normalizeVideo(video: Partial<Video> & { topic?: string }): Video {
     type: video.type === "Read" ? "Read" : "Watch",
     topics: Array.from(new Set(normalizedTopics)),
     status,
+    favorite: video.favorite === true,
+    liked: video.liked === true,
     valueScore: video.valueScore ?? 0,
     valueReason: video.valueReason ?? "AI analysis pending",
     valueFactors: video.valueFactors ?? starterMatch?.valueFactors,
     addedAt,
-    cooldownUntil:
-      status === "inbox"
-        ? Math.min(video.cooldownUntil || configuredCooldownUntil, configuredCooldownUntil)
-        : video.cooldownUntil ?? 0,
+    cooldownUntil: 0,
     finishedAt: video.finishedAt,
     archivedAt: video.archivedAt,
     progress: video.progress ?? 0,
@@ -532,12 +530,13 @@ function mergeVideoLibraries(local: Video[], remote: Partial<Video>[]) {
 async function saveCloudLibrary(
   videos: Video[],
   notes: Record<string, string>,
+  historyEvents: HistoryEvent[],
   signal?: AbortSignal,
 ) {
   const response = await fetch("/api/library", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ videos, notes }),
+    body: JSON.stringify({ videos, notes, historyEvents }),
     signal,
   });
   if (!response.ok) throw new Error("Cloud save failed");
@@ -565,6 +564,7 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [historyEvents, setHistoryEvents] = useState<HistoryEvent[]>([]);
   const [noteUpdatedAt, setNoteUpdatedAt] = useState<Record<string, number>>({});
   const [analysisDetails, setAnalysisDetails] = useState<
     Record<string, AnalysisDetail>
@@ -633,6 +633,7 @@ export default function Home() {
         let changed = false;
         const next = current.map((video) => {
           if (
+            !video.favorite &&
             video.status !== "watched" &&
             video.status !== "archived" &&
             currentTime - video.addedAt >= ARCHIVE_AFTER_MS
@@ -661,13 +662,13 @@ export default function Home() {
   }, [notes, ready]);
 
   useEffect(() => {
-    if (!("BroadcastChannel" in window)) return;
-    const channel = new BroadcastChannel(CAPTURE_BROADCAST_CHANNEL);
-    channel.addEventListener("message", (event) => {
-      if (event.data?.type !== "resync-item-captured" || !event.data.item) {
-        return;
-      }
-      const capturedItem = normalizeVideo(event.data.item as Partial<Video>);
+    const applyCapturedItem = (data: {
+      type?: string;
+      item?: Partial<Video>;
+      message?: string;
+    }) => {
+      if (data.type !== "resync-item-captured" || !data.item) return;
+      const capturedItem = normalizeVideo(data.item);
       setVideos((current) => {
         const exists = current.some((video) => video.id === capturedItem.id);
         return exists
@@ -679,11 +680,25 @@ export default function Home() {
       if (document.visibilityState === "visible") {
         setActiveType(capturedItem.type);
         openLibraryView("inbox");
-        setNotice(event.data.message ?? "Captured in ReSync.");
+        setNotice(data.message ?? "Captured in ReSync.");
         setNoticeTone("success");
       }
-    });
-    return () => channel.close();
+    };
+    const onWindowMessage = (event: MessageEvent) => {
+      if (event.source === window) applyCapturedItem(event.data ?? {});
+    };
+    const channel =
+      "BroadcastChannel" in window
+        ? new BroadcastChannel(CAPTURE_BROADCAST_CHANNEL)
+        : null;
+    channel?.addEventListener("message", (event) =>
+      applyCapturedItem(event.data ?? {}),
+    );
+    window.addEventListener("message", onWindowMessage);
+    return () => {
+      channel?.close();
+      window.removeEventListener("message", onWindowMessage);
+    };
   }, []);
 
   useEffect(() => {
@@ -715,6 +730,7 @@ export default function Home() {
           >;
           knowledge?: Record<string, KnowledgeSummary>;
           usageEvents?: UsageEvent[];
+          historyEvents?: HistoryEvent[];
           models?: ModelConfig;
         };
         const localVideos = readLocalVideos();
@@ -745,6 +761,9 @@ export default function Home() {
         setKnowledgeSummaries(remote.knowledge ?? {});
         setUsageEvents(
           Array.isArray(remote.usageEvents) ? remote.usageEvents : [],
+        );
+        setHistoryEvents(
+          Array.isArray(remote.historyEvents) ? remote.historyEvents : [],
         );
         if (remote.models) setModels(remote.models);
         setAnalysisDetails(
@@ -812,7 +831,7 @@ export default function Home() {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setCloudStatus("syncing");
-      void saveCloudLibrary(videos, notes, controller.signal)
+      void saveCloudLibrary(videos, notes, historyEvents, controller.signal)
         .then((result) => {
           window.localStorage.removeItem(CLOUD_DIRTY_KEY);
           setCloudStatus("synced");
@@ -831,7 +850,7 @@ export default function Home() {
     // The refresh function intentionally uses the exact videos/notes snapshot
     // that produced this successful cloud save.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cloudReady, notes, ready, videos]);
+  }, [cloudReady, historyEvents, notes, ready, videos]);
 
   useEffect(() => {
     if (ready) {
@@ -889,7 +908,6 @@ export default function Home() {
       .filter(
         (video) =>
           video.status !== "feed" &&
-          video.cooldownUntil <= now &&
           (video.analysisStatus ?? "pending") === "pending",
       )
       .forEach((video) => void requestAnalysis(video.id));
@@ -1084,6 +1102,17 @@ export default function Home() {
   const selectedVideo = videos.find((video) => video.id === selectedId) ?? null;
   const selectedAnalysis = selectedId ? analysisDetails[selectedId] : undefined;
 
+  const latestHistoryAt = useMemo(() => {
+    const latest = new Map<string, number>();
+    for (const event of historyEvents) {
+      latest.set(
+        event.itemId,
+        Math.max(latest.get(event.itemId) ?? 0, event.completedAt),
+      );
+    }
+    return latest;
+  }, [historyEvents]);
+
   const counts = useMemo(
     () => ({
       feed: videos.filter(
@@ -1102,10 +1131,16 @@ export default function Home() {
         (video) => video.type === activeType && video.status === "archived",
       ).length,
       history: videos.filter(
-        (video) => video.type === activeType && video.status === "watched",
+        (video) => video.type === activeType && latestHistoryAt.has(video.id),
+      ).length,
+      favorites: videos.filter(
+        (video) => video.type === activeType && video.favorite,
+      ).length,
+      liked: videos.filter(
+        (video) => video.type === activeType && video.liked,
       ).length,
     }),
-    [activeType, videos],
+    [activeType, latestHistoryAt, videos],
   );
   const feedCounts = useMemo(
     () => ({
@@ -1124,8 +1159,12 @@ export default function Home() {
       const matchesType = video.type === activeType;
       const matchesStatus =
         activeStatus === "history"
-          ? video.status === "watched"
-          : video.status === activeStatus;
+          ? latestHistoryAt.has(video.id)
+          : activeStatus === "favorites"
+            ? video.favorite
+            : activeStatus === "liked"
+              ? video.liked
+              : video.status === activeStatus;
       const matchesTopic =
         activeTopic === "All" || video.topics.includes(activeTopic);
       const query = search.trim().toLowerCase();
@@ -1137,10 +1176,13 @@ export default function Home() {
     });
 
     return result.sort((a, b) => {
-      if (activeStatus === "watched" || activeStatus === "history") {
+      if (activeStatus === "history") {
+        return (latestHistoryAt.get(b.id) ?? 0) - (latestHistoryAt.get(a.id) ?? 0);
+      }
+      if (activeStatus === "watched") {
         return (b.finishedAt ?? b.addedAt) - (a.finishedAt ?? a.addedAt);
       }
-      if (activeStatus === "inbox" || sort === "newest") return b.addedAt - a.addedAt;
+      if (sort === "newest") return b.addedAt - a.addedAt;
       if (sort === "shortest") {
         const aDuration = a.durationSeconds || 0;
         const bDuration = b.durationSeconds || 0;
@@ -1151,7 +1193,7 @@ export default function Home() {
       }
       return b.valueScore - a.valueScore;
     });
-  }, [activeStatus, activeTopic, activeType, search, sort, videos]);
+  }, [activeStatus, activeTopic, activeType, latestHistoryAt, search, sort, videos]);
 
   const totalMinutes = visibleVideos.reduce(
     (sum, video) => sum + video.durationMinutes,
@@ -1350,7 +1392,7 @@ export default function Home() {
       if (!quiet) {
         setNotice(
           metadata.metadataComplete
-            ? `Saved to Inbox with full metadata. ${COOLDOWN_MINUTES}-minute cooldown started.`
+            ? "Saved to Inbox with full metadata."
             : `Saved to Inbox. Add the YouTube API key to fetch duration and full metadata.`,
         );
         setNoticeTone(metadata.metadataComplete ? "success" : "info");
@@ -1449,8 +1491,6 @@ export default function Home() {
         setNoticeTone("info");
         return;
       }
-      if (result?.status === "cooldown_pending") return;
-
       if (!response.ok || !result || !applyAnalysisResult(id, result)) {
         throw new Error(result?.error ?? "Analysis failed");
       }
@@ -1615,14 +1655,19 @@ export default function Home() {
     const detectedType: ContentType = youtubeId ? "Watch" : "Read";
 
     if (
-      videos.some(
+      videos.find(
         (video) =>
           (youtubeId && video.youtubeId === youtubeId) ||
           video.url.replace(/\/$/, "") === value.replace(/\/$/, ""),
       )
     ) {
-      setNotice(`Already in ${detectedType === "Watch" ? "RePlay" : "ReRead"} — no duplicate added.`);
-      setNoticeTone("error");
+      const existing = videos.find(
+        (video) =>
+          (youtubeId && video.youtubeId === youtubeId) ||
+          video.url.replace(/\/$/, "") === value.replace(/\/$/, ""),
+      );
+      if (existing) rewatch(existing.id);
+      setUrl("");
       return;
     }
 
@@ -1639,10 +1684,12 @@ export default function Home() {
       type: detectedType,
       topics: [],
       status: "inbox",
+      favorite: false,
+      liked: false,
       valueScore: 0,
       valueReason: "AI analysis pending",
       addedAt,
-      cooldownUntil: addedAt + COOLDOWN_MINUTES * 60 * 1000,
+      cooldownUntil: 0,
       progress: 0,
       accent: "red",
       transcriptStatus: "pending",
@@ -1658,15 +1705,25 @@ export default function Home() {
       setNoticeTone("info");
       void enrichMetadata(newVideo.id, value);
     } else {
-      setNotice(
-        `Article saved to Inbox. ${COOLDOWN_MINUTES}-minute cooldown started.`,
-      );
+      setNotice("Article saved to Inbox. Analysis begins immediately.");
       setNoticeTone("success");
     }
   }
 
   function changeStatus(id: string, status: Status) {
     setOpenMenuId(null);
+    const completedAt = Date.now();
+    const previous = videos.find((video) => video.id === id);
+    if (status === "watched" && previous?.status !== "watched") {
+      setHistoryEvents((current) => [
+        {
+          id: crypto.randomUUID(),
+          itemId: id,
+          completedAt,
+        },
+        ...current,
+      ]);
+    }
     setVideos((current) =>
       current.map((video) =>
         video.id === id
@@ -1674,8 +1731,8 @@ export default function Home() {
               ...video,
               status,
               progress: status === "watched" ? 100 : video.progress,
-              finishedAt: status === "watched" ? Date.now() : video.finishedAt,
-              archivedAt: status === "archived" ? Date.now() : video.archivedAt,
+              finishedAt: status === "watched" ? completedAt : video.finishedAt,
+              archivedAt: status === "archived" ? completedAt : video.archivedAt,
             }
           : video,
       ),
@@ -1684,12 +1741,11 @@ export default function Home() {
 
   function openLibraryView(status: LibraryView) {
     setActiveStatus(status);
-    if (status === "inbox") setSort("newest");
   }
 
   function addToInbox(id: string) {
     setOpenMenuId(null);
-    const addedAt = now;
+    const addedAt = Date.now();
     setVideos((current) =>
       current.map((video) =>
         video.id === id
@@ -1697,13 +1753,13 @@ export default function Home() {
               ...video,
               status: "inbox",
               addedAt,
-              cooldownUntil: addedAt + COOLDOWN_MINUTES * 60 * 1000,
+              cooldownUntil: 0,
             }
           : video,
       ),
     );
     openLibraryView("inbox");
-    setNotice(`Added to Inbox. ${COOLDOWN_MINUTES}-minute cooldown started.`);
+    setNotice("Added to Inbox. Analysis begins immediately.");
     setNoticeTone("success");
   }
 
@@ -1711,14 +1767,49 @@ export default function Home() {
     setOpenMenuId(null);
     setVideos((current) =>
       current.map((video) =>
-        video.id === id && video.cooldownUntil <= now
+        video.id === id
           ? { ...video, status: "queued" }
           : video,
       ),
     );
     openLibraryView("queued");
-    setNotice("Cooldown complete. Item moved to Queue.");
+    setNotice("Item moved to Queue.");
     setNoticeTone("success");
+  }
+
+  function rewatch(id: string) {
+    const item = videos.find((video) => video.id === id);
+    const addedAt = Date.now();
+    setOpenMenuId(null);
+    setVideos((current) =>
+      current.map((video) =>
+        video.id === id
+          ? {
+              ...video,
+              status: "inbox",
+              addedAt,
+              cooldownUntil: 0,
+              finishedAt: undefined,
+              archivedAt: undefined,
+              progress: 0,
+            }
+          : video,
+      ),
+    );
+    if (item) setActiveType(item.type);
+    openLibraryView("inbox");
+    setNotice(
+      `${item?.type === "Read" ? "Reread" : "Rewatch"} added to Inbox. Your previous history is preserved.`,
+    );
+    setNoticeTone("success");
+  }
+
+  function toggleSavedFlag(id: string, flag: "favorite" | "liked") {
+    setVideos((current) =>
+      current.map((video) =>
+        video.id === id ? { ...video, [flag]: !video[flag] } : video,
+      ),
+    );
   }
 
   function updateVideo(id: string, changes: Partial<Video>) {
@@ -1769,7 +1860,7 @@ export default function Home() {
   async function removeVideo(video: Video) {
     setOpenMenuId(null);
     const confirmed = window.confirm(
-      `Permanently delete this ${video.type === "Watch" ? "video" : "article"}? This removes its notes, transcript/source, AI analysis, chat history, learning summary, and usage records from D1, plus its unshared R2 source object.`,
+      `Permanently delete this ${video.type === "Watch" ? "video" : "article"}? This removes its notes, transcript/source, AI analysis, watch history, chat history, learning summary, and usage records from D1, plus its unshared R2 source object.`,
     );
     if (!confirmed) return;
     setNotice("Deleting item and its related data…");
@@ -1801,6 +1892,9 @@ export default function Home() {
         return next;
       });
       setUsageEvents((current) => current.filter((event) => event.item_id !== video.id));
+      setHistoryEvents((current) =>
+        current.filter((event) => event.itemId !== video.id),
+      );
       if (selectedId === video.id) setSelectedId(null);
       setNotice(`${video.type === "Watch" ? "Video" : "Article"} and related data deleted.`);
       setNoticeTone("success");
@@ -1849,6 +1943,8 @@ export default function Home() {
             {[
               ["inbox", "Inbox"],
               ["queued", "Queue"],
+              ["favorites", "Favorites"],
+              ["liked", "Liked"],
               ["watched", "Finished"],
               ["history", "History"],
               ["archived", "Archive"],
@@ -1932,7 +2028,7 @@ export default function Home() {
               intention.
             </h1>
             <p className="intro-copy">
-              Curated discoveries become intentional choices: Inbox, cooldown, then Queue.
+              Curated discoveries become intentional choices: Inbox, Queue, and a lasting personal library.
             </p>
           </div>
           <button
@@ -1940,7 +2036,10 @@ export default function Home() {
             className="profile"
             aria-label="Open notes and AI settings"
             aria-expanded={profileOpen}
-            onClick={() => setProfileOpen(true)}
+            onClick={() => {
+              setProfileTab("scoring");
+              setProfileOpen(true);
+            }}
           >
             MT
           </button>
@@ -1978,7 +2077,7 @@ export default function Home() {
             <span className="status-light" />
             <span>
               {notice ||
-                `Pasted ${activeType === "Watch" ? "videos" : "articles"} go to Inbox · ${COOLDOWN_MINUTES}-minute cooldown`}
+                `Pasted ${activeType === "Watch" ? "videos" : "articles"} go straight to Inbox`}
             </span>
           </div>
         </section>
@@ -2051,21 +2150,23 @@ export default function Home() {
             <span>in this view</span>
           </p>
           <p>
-            After cooldown, GPT-5.4 mini summarizes and scores captured
-            transcripts or article text.
+            GPT-5.4 mini summarizes and scores captured transcripts or article
+            text as soon as the source is available.
           </p>
         </div>
 
         <section className={`video-library ${view}`}>
           {visibleVideos.map((video, index) => {
-            const isCooling =
-              video.status === "inbox" && now > 0 && video.cooldownUntil > now;
             const isInboxReady =
-              video.status === "inbox" && now > 0 && video.cooldownUntil <= now;
-            const canWatch =
-              video.status === "queued" || video.status === "watched";
+              video.status === "inbox";
+            const canWatch = video.status !== "feed";
+            const historyAt = latestHistoryAt.get(video.id);
             const showArchiveCountdown =
-              now > 0 && video.status !== "watched" && video.status !== "archived";
+              activeStatus !== "history" &&
+              !video.favorite &&
+              now > 0 &&
+              video.status !== "watched" &&
+              video.status !== "archived";
             const imageUrl =
               video.thumbnailUrl ??
               (video.youtubeId
@@ -2090,17 +2191,13 @@ export default function Home() {
                   <span className="rank">#{index + 1}</span>
                   {video.status === "feed" ? (
                     <span className="cooldown-pill">Curated</span>
-                  ) : isCooling ? (
-                    <span className="cooldown-pill">Cooling · {countdown(video.cooldownUntil, now)}</span>
                   ) : isInboxReady ? (
-                    <span className="cooldown-pill ready">Ready for Queue</span>
+                    <span className="cooldown-pill ready">Inbox</span>
                   ) : null}
                   <span className={canWatch ? "play-button" : "play-button locked"}>
                     {video.status === "feed"
                       ? "+"
-                      : isCooling
-                        ? "◷"
-                        : isInboxReady
+                      : isInboxReady
                           ? "→"
                           : video.type === "Watch"
                             ? "▶"
@@ -2130,7 +2227,12 @@ export default function Home() {
                     <span className="added-time">
                       {showArchiveCountdown
                         ? archiveCountdown(video.addedAt, now)
-                        : relativeTime(video.finishedAt ?? video.addedAt, now || video.addedAt + 60000)}
+                        : relativeTime(
+                            activeStatus === "history" && historyAt
+                              ? historyAt
+                              : video.finishedAt ?? video.addedAt,
+                            now || video.addedAt + 60000,
+                          )}
                     </span>
                   </div>
                   <button className="title-button" onClick={() => openVideo(video.id)}>
@@ -2163,16 +2265,19 @@ export default function Home() {
                     </span>
                   </div>
                   <div className="card-actions">
-                    {video.status === "feed" ? (
+                    {activeStatus === "history" ? (
+                      <button
+                        className="primary-action"
+                        onClick={() => rewatch(video.id)}
+                      >
+                        {video.type === "Watch" ? "Rewatch" : "Reread"}
+                      </button>
+                    ) : video.status === "feed" ? (
                       <button
                         className="primary-action"
                         onClick={() => addToInbox(video.id)}
                       >
                         Add to Inbox
-                      </button>
-                    ) : video.status === "inbox" && isCooling ? (
-                      <button className="cooling-action" disabled>
-                        Move to Queue · {countdown(video.cooldownUntil, now)}
                       </button>
                     ) : video.status === "inbox" ? (
                       <button
@@ -2191,11 +2296,29 @@ export default function Home() {
                     ) : video.status === "watched" ? (
                       <button
                         className="primary-action"
-                        onClick={() => changeStatus(video.id, "queued")}
+                        onClick={() => rewatch(video.id)}
                       >
-                        Move to Queue
+                        {video.type === "Watch" ? "Rewatch" : "Reread"}
                       </button>
                     ) : null}
+                    <button
+                      className={video.favorite ? "icon-action saved" : "icon-action"}
+                      type="button"
+                      aria-label={video.favorite ? "Remove from favorites" : "Add to favorites"}
+                      aria-pressed={video.favorite}
+                      onClick={() => toggleSavedFlag(video.id, "favorite")}
+                    >
+                      {video.favorite ? "★" : "☆"}
+                    </button>
+                    <button
+                      className={video.liked ? "icon-action saved liked" : "icon-action"}
+                      type="button"
+                      aria-label={video.liked ? "Unlike" : "Like"}
+                      aria-pressed={video.liked}
+                      onClick={() => toggleSavedFlag(video.id, "liked")}
+                    >
+                      {video.liked ? "♥" : "♡"}
+                    </button>
                     <div className="overflow-menu-wrap">
                       <button
                         className="icon-action overflow-trigger"
@@ -2219,13 +2342,16 @@ export default function Home() {
                             >
                               Move to Finished
                             </button>
-                          ) : video.status === "queued" ||
-                            video.status === "watched" ||
+                          ) : video.status === "watched" ||
                             video.status === "archived" ? (
                             <button
                               role="menuitem"
-                              onClick={() => addToInbox(video.id)}
+                              onClick={() => rewatch(video.id)}
                             >
+                              {video.type === "Watch" ? "Rewatch" : "Reread"}
+                            </button>
+                          ) : video.status === "queued" ? (
+                            <button role="menuitem" onClick={() => addToInbox(video.id)}>
                               Move to Inbox
                             </button>
                           ) : null}
@@ -2293,7 +2419,7 @@ export default function Home() {
                 [
                   ["notes", "Saved notes"],
                   ["knowledge", "AI summaries"],
-                  ["scoring", "Scoring & models"],
+                  ["scoring", "Scoring rubric"],
                   ["usage", "Usage"],
                 ] as const
               ).map(([tab, label]) => (
@@ -2482,6 +2608,24 @@ export default function Home() {
                         </div>
                       ))}
                     </div>
+                    <div className="rubric-prompt">
+                      <strong>Prompt used for every score</strong>
+                      <p>
+                        Classify the content using only its captured source and
+                        metadata. Score personal value as the exact sum of novelty
+                        /25, actionability /25, information density /20, evidence
+                        quality /15, and time efficiency /15.
+                      </p>
+                      <p>
+                        Treat prior knowledge learned from your own notes as the
+                        baseline. Repeated ideas must reduce novelty, information
+                        density, time efficiency, and any actionability that is not
+                        genuinely new. Evidence quality still reflects the source
+                        itself. Recommend summary-only for repetitive, generic, or
+                        non-obvious-lesson-free content. Keep the summary factual and
+                        never infer claims absent from the source.
+                      </p>
+                    </div>
                   </section>
                   <section>
                     <p className="eyebrow">AI configuration</p>
@@ -2619,40 +2763,11 @@ export default function Home() {
                     <h2>Worth saving?</h2>
                     <p>
                       Add this {selectedVideo.type === "Watch" ? "video" : "article"}{" "}
-                      to Inbox to begin its {COOLDOWN_MINUTES}-minute impulse buffer.
-                      It cannot be opened directly from the curated feed.
+                      to Inbox. It becomes available immediately and AI analysis
+                      starts as soon as source text is available.
                     </p>
                     <button onClick={() => addToInbox(selectedVideo.id)}>
                       Add to Inbox
-                    </button>
-                  </div>
-                ) : selectedVideo.status === "inbox" &&
-                  selectedVideo.cooldownUntil > now ? (
-                  <div className="cooldown-screen">
-                    <span className="cooldown-clock">◷</span>
-                    <p className="eyebrow">Impulse buffer</p>
-                    <h2>{countdown(selectedVideo.cooldownUntil, now)}</h2>
-                    <p>
-                      The {selectedVideo.type === "Watch" ? "video" : "article"} is
-                      saved, but not available yet. If the urge passes, remove it. If
-                      the value remains, it will unlock automatically.
-                    </p>
-                    <button onClick={() => removeVideo(selectedVideo)}>
-                      I don&apos;t need this{" "}
-                      {selectedVideo.type === "Watch" ? "video" : "article"}
-                    </button>
-                  </div>
-                ) : selectedVideo.status === "inbox" ? (
-                  <div className="cooldown-screen">
-                    <span className="cooldown-clock ready">✓</span>
-                    <p className="eyebrow">Cooldown complete</p>
-                    <h2>Still valuable?</h2>
-                    <p>
-                      The initial urge has passed. Move it to Queue only if you still
-                      intend to {selectedVideo.type === "Watch" ? "watch" : "read"} it.
-                    </p>
-                    <button onClick={() => moveToQueue(selectedVideo.id)}>
-                      Move to Queue
                     </button>
                   </div>
                 ) : selectedVideo.type === "Watch" && selectedVideo.youtubeId ? (
@@ -2705,8 +2820,7 @@ export default function Home() {
                   <h2>{selectedVideo.title}</h2>
                   <p>{selectedVideo.channel}</p>
                 </div>
-                {selectedVideo.status === "queued" ||
-                selectedVideo.status === "watched" ? (
+                {selectedVideo.status !== "feed" ? (
                   <a href={selectedVideo.url} target="_blank" rel="noreferrer">
                     {selectedVideo.type === "Watch"
                       ? "Open on YouTube ↗"
@@ -2759,7 +2873,7 @@ export default function Home() {
                           : "Article text was not captured. Save it with the extension."
                         : selectedVideo.analysisStatus === "error"
                           ? "Analysis could not run. You can retry with a pasted transcript or recording."
-                          : "GPT-5.4 mini will summarize and score this content when the cooldown ends."}
+                          : "GPT-5.4 mini will summarize and score this content as soon as source text is available."}
                     </p>
                     {selectedVideo.type === "Watch" ? (
                       <div className="transcript-actions">

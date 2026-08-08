@@ -35,6 +35,8 @@ export const items = sqliteTable(
     contentType: text("content_type").notNull().default("Watch"),
     topicsJson: text("topics_json").notNull().default("[]"),
     status: text("status").notNull().default("inbox"),
+    favorite: integer("favorite", { mode: "boolean" }).notNull().default(false),
+    liked: integer("liked", { mode: "boolean" }).notNull().default(false),
     valueScore: integer("value_score").notNull().default(0),
     valueReason: text("value_reason").notNull().default("AI analysis pending"),
     valueFactorsJson: text("value_factors_json"),
@@ -52,6 +54,21 @@ export const items = sqliteTable(
     uniqueIndex("items_youtube_id_unique").on(table.youtubeId),
     index("items_type_status_idx").on(table.contentType, table.status),
     index("items_updated_at_idx").on(table.updatedAt),
+  ],
+);
+
+export const consumptionHistory = sqliteTable(
+  "consumption_history",
+  {
+    id: text("id").primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    completedAt: integer("completed_at").notNull(),
+  },
+  (table) => [
+    index("consumption_history_item_id_idx").on(table.itemId),
+    index("consumption_history_completed_at_idx").on(table.completedAt),
   ],
 );
 

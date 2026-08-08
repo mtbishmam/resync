@@ -94,6 +94,32 @@ async function showFeedbackNotification(feedback) {
   });
 }
 
+async function notifyOpenReSyncTabs(item, message) {
+  if (
+    !item ||
+    typeof chrome.tabs.query !== "function" ||
+    typeof chrome.tabs.sendMessage !== "function"
+  ) {
+    return;
+  }
+  const tabs = await chrome.tabs
+    .query({ url: `${RESYNC_URL}/*` })
+    .catch(() => []);
+  await Promise.all(
+    tabs
+      .filter((tab) => Number.isInteger(tab.id))
+      .map((tab) =>
+        chrome.tabs
+          .sendMessage(tab.id, {
+            type: "resync-item-captured",
+            item,
+            message,
+          })
+          .catch(() => undefined),
+      ),
+  );
+}
+
 async function finishCapture(message, sender = {}) {
   const queue = await readQueue();
   const completed = queue.find((item) => item.captureId === message.captureId);
@@ -134,6 +160,7 @@ async function tryDirectCapture(capture) {
     if (!response.ok || !contentType.includes("application/json")) return false;
     const result = await response.json();
     if (!result?.item) return false;
+    await notifyOpenReSyncTabs(result.item, result.message);
     await finishCapture({
       type: "resync-capture-result",
       captureId: capture.captureId,

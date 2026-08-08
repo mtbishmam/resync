@@ -27,6 +27,8 @@ const CREATE_STATEMENTS = [
     content_type TEXT DEFAULT 'Watch' NOT NULL,
     topics_json TEXT DEFAULT '[]' NOT NULL,
     status TEXT DEFAULT 'inbox' NOT NULL,
+    favorite INTEGER DEFAULT 0 NOT NULL,
+    liked INTEGER DEFAULT 0 NOT NULL,
     value_score INTEGER DEFAULT 0 NOT NULL,
     value_reason TEXT DEFAULT 'AI analysis pending' NOT NULL,
     value_factors_json TEXT,
@@ -43,6 +45,17 @@ const CREATE_STATEMENTS = [
   "CREATE UNIQUE INDEX IF NOT EXISTS items_youtube_id_unique ON items (youtube_id)",
   "CREATE INDEX IF NOT EXISTS items_type_status_idx ON items (content_type, status)",
   "CREATE INDEX IF NOT EXISTS items_updated_at_idx ON items (updated_at)",
+  `CREATE TABLE IF NOT EXISTS consumption_history (
+    id TEXT PRIMARY KEY NOT NULL,
+    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    completed_at INTEGER NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS consumption_history_item_id_idx ON consumption_history (item_id)",
+  "CREATE INDEX IF NOT EXISTS consumption_history_completed_at_idx ON consumption_history (completed_at)",
+  `INSERT OR IGNORE INTO consumption_history (id, item_id, completed_at)
+   SELECT 'legacy:' || id, id, finished_at
+   FROM items
+   WHERE finished_at IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS notes (
     id TEXT PRIMARY KEY NOT NULL,
     item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
@@ -191,6 +204,8 @@ export type LibraryItem = {
   type: "Watch" | "Read";
   topics: Array<"AI" | "CP" | "Tech" | "Business">;
   status: "feed" | "inbox" | "queued" | "watched" | "archived";
+  favorite: boolean;
+  liked: boolean;
   valueScore: number;
   valueReason: string;
   valueFactors?: Array<{ label: string; points: number; max: number }>;
@@ -221,6 +236,8 @@ export type ItemRow = {
   content_type: string;
   topics_json: string;
   status: string;
+  favorite: number;
+  liked: number;
   value_score: number;
   value_reason: string;
   value_factors_json: string | null;
@@ -305,6 +322,8 @@ export function normalizeLibraryItem(value: unknown): LibraryItem | null {
     type,
     topics: Array.from(new Set(topics)),
     status,
+    favorite: item.favorite === true,
+    liked: item.liked === true,
     valueScore: Math.max(0, Math.min(100, numberValue(item.valueScore))),
     valueReason: stringValue(item.valueReason, "AI analysis pending"),
     valueFactors: Array.isArray(item.valueFactors)
@@ -340,6 +359,8 @@ export function itemFromRow(row: ItemRow): LibraryItem {
     type: row.content_type === "Read" ? "Read" : "Watch",
     topics: safeJson<LibraryItem["topics"]>(row.topics_json, []),
     status: row.status as LibraryItem["status"],
+    favorite: row.favorite === 1,
+    liked: row.liked === 1,
     valueScore: row.value_score,
     valueReason: row.value_reason,
     valueFactors: safeJson<LibraryItem["valueFactors"]>(
@@ -368,11 +389,11 @@ export function upsertItemStatement(
         id, youtube_id, url, title, author, thumbnail_url, description,
         published_at, tags_json, caption_available, metadata_complete,
         duration_minutes, duration_seconds, content_type, topics_json, status,
-        value_score, value_reason, value_factors_json, added_at, cooldown_until,
+        favorite, liked, value_score, value_reason, value_factors_json, added_at, cooldown_until,
         finished_at, archived_at, progress, accent, transcript_status, analysis_status, updated_at
       ) VALUES (
         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28
+        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30
       )
       ON CONFLICT(id) DO UPDATE SET
         youtube_id = excluded.youtube_id,
@@ -390,6 +411,8 @@ export function upsertItemStatement(
         content_type = excluded.content_type,
         topics_json = excluded.topics_json,
         status = excluded.status,
+        favorite = excluded.favorite,
+        liked = excluded.liked,
         value_score = excluded.value_score,
         value_reason = excluded.value_reason,
         value_factors_json = excluded.value_factors_json,
@@ -424,6 +447,8 @@ export function upsertItemStatement(
       item.type,
       JSON.stringify(item.topics),
       item.status,
+      item.favorite ? 1 : 0,
+      item.liked ? 1 : 0,
       item.valueScore,
       item.valueReason,
       item.valueFactors ? JSON.stringify(item.valueFactors) : null,
@@ -512,6 +537,17 @@ export async function ensureNormalizedLibrary() {
   if (!names.has("archived_at")) {
     await d1.prepare("ALTER TABLE items ADD COLUMN archived_at INTEGER").run();
   }
+  if (!names.has("favorite")) {
+    await d1
+      .prepare("ALTER TABLE items ADD COLUMN favorite INTEGER DEFAULT 0 NOT NULL")
+      .run();
+  }
+  if (!names.has("liked")) {
+    await d1
+      .prepare("ALTER TABLE items ADD COLUMN liked INTEGER DEFAULT 0 NOT NULL")
+      .run();
+  }
+  await d1.prepare("UPDATE items SET cooldown_until = 0 WHERE cooldown_until <> 0").run();
   await migrateLegacySnapshot(d1);
   return d1;
 }

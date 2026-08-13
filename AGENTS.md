@@ -1,5 +1,16 @@
 # ReSync project instructions
 
+## Shared ReApp context
+
+Whenever a task mentions any ReApp or asks about how ReSync relates to ReFocus
+or ReSolve, read the canonical AI context at
+[`agents/context/reapps.md`](<../../Library/Mobile Documents/iCloud~md~obsidian/Documents/obsidian/agents/context/reapps.md>).
+It is derived from the current code under `/Users/mtbishmam/code` and contains
+the family vocabulary, exact Site URLs, product boundaries, repository map,
+architecture, data model, and planned-versus-shipped distinctions. This file
+remains authoritative for ReSync-specific implementation rules; the shared
+note prevents cross-app context from being lost.
+
 ## ChatGPT Account, Site, and Codex Context
 
 ### ChatGPT accounts

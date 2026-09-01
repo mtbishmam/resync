@@ -574,14 +574,78 @@ button {
   text-decoration: none;
 }
 
+.video-thumb-image,
+.thumbnail-fallback {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.video-thumb-image {
+  display: block;
+  object-fit: cover;
+}
+
+.thumbnail-fallback {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 18px;
+  background: linear-gradient(135deg, #5a6472, #202936);
+  color: #fff;
+}
+
+.thumbnail-fallback.blue {
+  background: linear-gradient(135deg, #407ad5, #11213b);
+}
+
+.thumbnail-fallback.amber {
+  background: linear-gradient(135deg, #df9a35, #392817);
+}
+
+.thumbnail-fallback.green {
+  background: linear-gradient(135deg, #37a875, #132d2c);
+}
+
+.thumbnail-fallback.red {
+  background: linear-gradient(135deg, #e85a50, #311a24);
+}
+
+.thumbnail-fallback-mark {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: rgba(16, 20, 27, 0.46);
+  font-size: 12px;
+}
+
+.thumbnail-fallback-title {
+  display: -webkit-box;
+  overflow: hidden;
+  max-height: 3.1em;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .video-thumb::before {
   position: absolute;
+  z-index: 1;
   inset: 0;
   background:
     radial-gradient(circle at 24% 28%, rgba(255, 255, 255, 0.18), transparent 17%),
     linear-gradient(135deg, transparent 47%, rgba(255, 255, 255, 0.08) 48% 50%, transparent 51%),
     linear-gradient(135deg, rgba(139, 92, 246, 0.72), #16223c);
   content: "";
+  pointer-events: none;
 }
 
 .video-thumb.blue::before {
@@ -612,15 +676,11 @@ button {
     linear-gradient(135deg, #e85a50, #311a24);
 }
 
-.video-thumb[style]::before {
-  background: linear-gradient(180deg, rgba(16, 20, 27, 0.03), rgba(16, 20, 27, 0.3));
-}
-
 .rank,
 .duration,
 .play-button {
   position: absolute;
-  z-index: 1;
+  z-index: 2;
 }
 
 .rank {

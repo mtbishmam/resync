@@ -3,6 +3,7 @@ import {
   itemFromRow,
   ItemRow,
   LibraryItem,
+  youtubeThumbnailUrl,
   upsertItemStatement,
 } from "../../../db/library";
 import { storeSourceDocument } from "../../../lib/transcript-analysis";
@@ -95,6 +96,9 @@ export async function POST(request: Request) {
       : {
           id: crypto.randomUUID(),
           youtubeId: youtubeId ?? undefined,
+          thumbnailUrl: youtubeId
+            ? youtubeThumbnailUrl(youtubeId)
+            : undefined,
           url: url.toString(),
           title: shortText(
             body.title,

@@ -176,6 +176,65 @@ function getYouTubeId(value: string) {
   }
 }
 
+function youtubeThumbnailCandidates(
+  video: Pick<Video, "youtubeId" | "thumbnailUrl" | "url">,
+) {
+  const youtubeId = video.youtubeId ?? getYouTubeId(video.url);
+  return Array.from(
+    new Set(
+      [
+        youtubeId ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg` : undefined,
+        youtubeId ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg` : undefined,
+        video.thumbnailUrl,
+        youtubeId ? `https://i.ytimg.com/vi/${youtubeId}/mqdefault.jpg` : undefined,
+        youtubeId ? `https://img.youtube.com/vi/${youtubeId}/0.jpg` : undefined,
+      ].filter(
+        (candidate): candidate is string =>
+          typeof candidate === "string" && candidate.trim().length > 0,
+      ),
+    ),
+  );
+}
+
+type VideoThumbnailProps = Pick<
+  Video,
+  "id" | "youtubeId" | "thumbnailUrl" | "url" | "title" | "accent"
+>;
+
+function VideoThumbnail({ video }: { video: VideoThumbnailProps }) {
+  const candidates = youtubeThumbnailCandidates(video);
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  const [failed, setFailed] = useState(candidates.length === 0);
+  const source = candidates[candidateIndex];
+
+  if (!source || failed) {
+    return (
+      <span className={`thumbnail-fallback ${video.accent}`} aria-hidden="true">
+        <span className="thumbnail-fallback-mark">▶</span>
+        <span className="thumbnail-fallback-title">{video.title}</span>
+      </span>
+    );
+  }
+
+  return (
+    // YouTube owns and serves these remote thumbnail assets; Next image optimization
+    // cannot optimize the fallback chain without replacing the error handling.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      className="video-thumb-image"
+      src={source}
+      alt=""
+      onError={() => {
+        if (candidateIndex < candidates.length - 1) {
+          setCandidateIndex((current) => current + 1);
+        } else {
+          setFailed(true);
+        }
+      }}
+    />
+  );
+}
+
 function getWebUrl(value: string) {
   try {
     const url = new URL(value.trim());
@@ -459,10 +518,13 @@ function normalizeVideo(video: Partial<Video> & { topic?: string }): Video {
   const normalizedTopics = (
     Array.isArray(video.topics) ? video.topics : legacyTopic ? [legacyTopic] : []
   ).filter((topic): topic is Topic => topicOptions.includes(topic as Topic));
+  const youtubeId = video.youtubeId ?? getYouTubeId(video.url ?? "");
   return {
     id: video.id ?? crypto.randomUUID(),
-    youtubeId: video.youtubeId ?? getYouTubeId(video.url ?? ""),
-    thumbnailUrl: video.thumbnailUrl,
+    youtubeId,
+    thumbnailUrl:
+      video.thumbnailUrl ??
+      (youtubeId ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg` : undefined),
     description: video.description,
     publishedAt: video.publishedAt,
     tags: video.tags,
@@ -894,8 +956,10 @@ export default function Home() {
       .filter(
         (video) =>
           video.type === "Watch" &&
-          video.youtubeId &&
-          (!video.metadataComplete || !video.durationSeconds),
+          (video.youtubeId || getYouTubeId(video.url)) &&
+          (!video.metadataComplete ||
+            !video.durationSeconds ||
+            !video.thumbnailUrl),
       )
       .forEach((video) => {
         void enrichMetadata(video.id, video.url, true);
@@ -2167,11 +2231,6 @@ export default function Home() {
               now > 0 &&
               video.status !== "watched" &&
               video.status !== "archived";
-            const imageUrl =
-              video.thumbnailUrl ??
-              (video.youtubeId
-                ? `https://i.ytimg.com/vi/${video.youtubeId}/hqdefault.jpg`
-                : undefined);
             return (
               <article className="video-card" key={video.id}>
                 <button
@@ -2180,14 +2239,11 @@ export default function Home() {
                   aria-label={`Open ${video.title} in ${
                     video.type === "Watch" ? "RePlay" : "ReRead"
                   }`}
-                  style={
-                    imageUrl
-                      ? {
-                          backgroundImage: `linear-gradient(180deg, transparent 45%, rgba(10, 13, 20, .82)), url("${imageUrl}")`,
-                        }
-                      : undefined
-                  }
                 >
+                  <VideoThumbnail
+                    key={`${video.id}:${video.youtubeId ?? ""}:${video.thumbnailUrl ?? ""}:${video.url}`}
+                    video={video}
+                  />
                   <span className="rank">#{index + 1}</span>
                   {video.status === "feed" ? (
                     <span className="cooldown-pill">Curated</span>

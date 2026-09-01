@@ -19,6 +19,10 @@ type YouTubeApiVideo = {
 
 const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
+function fallbackThumbnail(videoId: string) {
+  return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+}
+
 function getYouTubeId(value: string) {
   try {
     const url = new URL(value);
@@ -68,7 +72,7 @@ function bestThumbnail(
     ?.url;
 }
 
-async function fetchBasicMetadata(videoUrl: string) {
+async function fetchBasicMetadata(videoUrl: string, videoId: string) {
   const endpoint = new URL("https://www.youtube.com/oembed");
   endpoint.searchParams.set("url", videoUrl);
   endpoint.searchParams.set("format", "json");
@@ -88,7 +92,7 @@ async function fetchBasicMetadata(videoUrl: string) {
   return {
     title: metadata.title,
     channel: metadata.author_name,
-    thumbnailUrl: metadata.thumbnail_url,
+    thumbnailUrl: metadata.thumbnail_url || fallbackThumbnail(videoId),
     durationSeconds: 0,
     durationMinutes: 0,
     description: "",
@@ -123,7 +127,8 @@ async function fetchCompleteMetadata(videoId: string, apiKey: string) {
     metadata: {
       title: video.snippet.title,
       channel: video.snippet.channelTitle,
-      thumbnailUrl: bestThumbnail(video.snippet.thumbnails),
+      thumbnailUrl:
+        bestThumbnail(video.snippet.thumbnails) ?? fallbackThumbnail(videoId),
       durationSeconds,
       durationMinutes: Math.ceil(durationSeconds / 60),
       description: video.snippet.description,
@@ -167,11 +172,24 @@ export async function GET(request: Request) {
     }
   }
 
-  const basic = await fetchBasicMetadata(videoUrl);
+  const basic = await fetchBasicMetadata(videoUrl, videoId);
   if (!basic) {
     return Response.json(
-      { error: "This YouTube video does not exist or is not accessible.", code: "NOT_FOUND" },
-      { status: 404 },
+      {
+        title: "Saved YouTube video",
+        channel: "YouTube",
+        thumbnailUrl: fallbackThumbnail(videoId),
+        durationSeconds: 0,
+        durationMinutes: 0,
+        description: "",
+        publishedAt: null,
+        tags: [],
+        captionAvailable: null,
+        embeddable: null,
+        metadataComplete: false,
+        source: "fallback",
+      },
+      { headers: { "cache-control": "public, max-age=300, s-maxage=3600" } },
     );
   }
 

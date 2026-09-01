@@ -2,6 +2,7 @@ import { getD1 } from "./index";
 
 export const LIBRARY_ID = "primary";
 export const NORMALIZED_LIBRARY_KEY = "normalized_library_initialized";
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 
 const CREATE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS replay_library (
@@ -268,6 +269,47 @@ function numberValue(value: unknown, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function youtubeIdFromUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    let candidate: string | null | undefined;
+    if (hostname === "youtu.be") {
+      candidate = url.pathname.split("/").filter(Boolean)[0];
+    } else if (hostname === "youtube.com" || hostname.endsWith(".youtube.com")) {
+      if (
+        url.pathname.startsWith("/shorts/") ||
+        url.pathname.startsWith("/embed/") ||
+        url.pathname.startsWith("/live/")
+      ) {
+        candidate = url.pathname.split("/").filter(Boolean)[1];
+      } else if (url.pathname === "/watch") {
+        candidate = url.searchParams.get("v");
+      }
+    }
+    return candidate && VIDEO_ID_PATTERN.test(candidate) ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function youtubeThumbnailUrl(youtubeId: string) {
+  return VIDEO_ID_PATTERN.test(youtubeId)
+    ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`
+    : undefined;
+}
+
+function itemThumbnailUrl(youtubeId: string | undefined, value: string | null) {
+  const thumbnailUrl = value?.trim();
+  if (
+    youtubeId &&
+    (!thumbnailUrl || /\/maxresdefault\.jpg(?:[?#].*)?$/.test(thumbnailUrl))
+  ) {
+    return youtubeThumbnailUrl(youtubeId);
+  }
+  return thumbnailUrl || undefined;
+}
+
 function nullableBoolean(value: unknown) {
   return typeof value === "boolean" ? value : null;
 }
@@ -302,10 +344,17 @@ export function normalizeLibraryItem(value: unknown): LibraryItem | null {
     ? (item.analysisStatus as LibraryItem["analysisStatus"])
     : "pending";
 
+  const storedYoutubeId = stringValue(item.youtubeId);
+  const youtubeId =
+    (storedYoutubeId && VIDEO_ID_PATTERN.test(storedYoutubeId)
+      ? storedYoutubeId
+      : undefined) ||
+    (type === "Watch" ? youtubeIdFromUrl(url) : undefined);
+
   return {
     id,
-    youtubeId: stringValue(item.youtubeId) || undefined,
-    thumbnailUrl: stringValue(item.thumbnailUrl) || undefined,
+    youtubeId,
+    thumbnailUrl: itemThumbnailUrl(youtubeId, stringValue(item.thumbnailUrl)),
     description: stringValue(item.description) || undefined,
     publishedAt:
       typeof item.publishedAt === "string" ? item.publishedAt : null,
@@ -341,10 +390,14 @@ export function normalizeLibraryItem(value: unknown): LibraryItem | null {
 }
 
 export function itemFromRow(row: ItemRow): LibraryItem {
+  const youtubeId =
+    (row.youtube_id && VIDEO_ID_PATTERN.test(row.youtube_id)
+      ? row.youtube_id
+      : undefined) || youtubeIdFromUrl(row.url);
   return {
     id: row.id,
-    youtubeId: row.youtube_id ?? undefined,
-    thumbnailUrl: row.thumbnail_url ?? undefined,
+    youtubeId,
+    thumbnailUrl: itemThumbnailUrl(youtubeId, row.thumbnail_url),
     description: row.description ?? undefined,
     publishedAt: row.published_at,
     tags: safeJson<string[]>(row.tags_json, []),
@@ -432,7 +485,7 @@ export function upsertItemStatement(
       item.url,
       item.title,
       item.channel,
-      item.thumbnailUrl ?? null,
+      itemThumbnailUrl(item.youtubeId, item.thumbnailUrl ?? null) ?? null,
       item.description ?? null,
       item.publishedAt ?? null,
       JSON.stringify(item.tags ?? []),
@@ -526,6 +579,75 @@ async function migrateLegacySnapshot(d1: D1Database) {
   await d1.batch(statements);
 }
 
+type ThumbnailRepairRow = {
+  id: string;
+  youtube_id: string | null;
+  url: string;
+  thumbnail_url: string | null;
+};
+
+async function repairMissingYoutubeThumbnails(d1: D1Database) {
+  const rows = await d1
+    .prepare(
+      `SELECT id, youtube_id, url, thumbnail_url
+       FROM items
+       WHERE content_type = 'Watch'
+         AND (youtube_id IS NOT NULL OR thumbnail_url IS NULL OR trim(thumbnail_url) = '')`,
+    )
+    .all<ThumbnailRepairRow>();
+
+  const thumbnailUpdates = [];
+  const youtubeIdUpdates = [];
+  const knownYoutubeIds = new Map<string, string>();
+
+  for (const row of rows.results ?? []) {
+    if (row.youtube_id && VIDEO_ID_PATTERN.test(row.youtube_id)) {
+      knownYoutubeIds.set(row.youtube_id, row.id);
+    }
+  }
+
+  for (const row of rows.results ?? []) {
+    const youtubeId =
+      row.youtube_id && VIDEO_ID_PATTERN.test(row.youtube_id)
+        ? row.youtube_id
+        : youtubeIdFromUrl(row.url);
+    if (!youtubeId) continue;
+
+    const thumbnailUrl = itemThumbnailUrl(youtubeId, row.thumbnail_url);
+    if (thumbnailUrl && thumbnailUrl !== row.thumbnail_url) {
+      thumbnailUpdates.push(
+        d1
+          .prepare(
+            "UPDATE items SET thumbnail_url = ?1, updated_at = ?2 WHERE id = ?3",
+          )
+          .bind(thumbnailUrl, Date.now(), row.id),
+      );
+    }
+
+    const duplicateOwner = knownYoutubeIds.get(youtubeId);
+    if (
+      (!row.youtube_id || !VIDEO_ID_PATTERN.test(row.youtube_id)) &&
+      (!duplicateOwner || duplicateOwner === row.id)
+    ) {
+      knownYoutubeIds.set(youtubeId, row.id);
+      youtubeIdUpdates.push(
+        d1
+          .prepare("UPDATE items SET youtube_id = ?1 WHERE id = ?2")
+          .bind(youtubeId, row.id),
+      );
+    }
+  }
+
+  if (thumbnailUpdates.length) await d1.batch(thumbnailUpdates);
+  if (youtubeIdUpdates.length) {
+    try {
+      await d1.batch(youtubeIdUpdates);
+    } catch {
+      // A legacy duplicate ID must not prevent the safe thumbnail repair.
+    }
+  }
+}
+
 export async function ensureNormalizedLibrary() {
   const d1 = await getD1();
   await d1.batch(CREATE_STATEMENTS.map((statement) => d1.prepare(statement)));
@@ -549,5 +671,6 @@ export async function ensureNormalizedLibrary() {
   }
   await d1.prepare("UPDATE items SET cooldown_until = 0 WHERE cooldown_until <> 0").run();
   await migrateLegacySnapshot(d1);
+  await repairMissingYoutubeThumbnails(d1);
   return d1;
 }
